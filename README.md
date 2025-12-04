@@ -55,6 +55,10 @@ Edit `config.py` to adjust settings, or set environment variables:
 
 ### 2. Start the Flask Agent
 
+you can mostly just run the './start.sh but may need some config.
+
+pip install -r requirements.txt
+
 ```bash
 python agent.py
 ```
