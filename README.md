@@ -59,6 +59,10 @@ you can mostly just run the './start.sh but may need some config.
 
 pip install -r requirements.txt
 
+pip install --upgrade setuptools
+
+pip install lxml
+
 ```bash
 python agent.py
 ```
