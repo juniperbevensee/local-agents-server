@@ -21,11 +21,24 @@ from config import (
     SUMMARY_TEMPERATURE
 )
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging with more detail
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Log all incoming requests
+@app.before_request
+def log_request_info():
+    logger.info('=' * 80)
+    logger.info(f'Incoming Request: {request.method} {request.path}')
+    logger.info(f'Headers: {dict(request.headers)}')
+    if request.data:
+        logger.info(f'Body: {request.data.decode("utf-8")[:500]}...' if len(request.data) > 500 else f'Body: {request.data.decode("utf-8")}')
+    logger.info('=' * 80)
 
 def extract_url_from_text(text):
     """Extract URL from text using regex."""
@@ -113,12 +126,30 @@ def summarize_with_lm_studio(content, query=None):
         logger.error(f"Error calling LM Studio: {e}")
         return f"Error generating summary: {str(e)}"
 
+@app.route('/', methods=['GET', 'POST'])
+def root():
+    """Root endpoint - redirects to correct endpoint."""
+    if request.method == 'POST':
+        # User sent POST to root, redirect to the correct handler
+        logger.warning(f"Received POST to root path. Forwarding to /v1/chat/completions")
+        return chat_completions()
+    else:
+        return jsonify({
+            "service": "url-fetch-summarize-agent",
+            "status": "running",
+            "endpoints": {
+                "chat_completions": "/v1/chat/completions (POST)",
+                "health": "/health (GET)"
+            },
+            "usage": "Send POST requests to /v1/chat/completions with OpenAI-compatible format"
+        })
+
 @app.route('/v1/chat/completions', methods=['POST'])
 def chat_completions():
     """Main endpoint that mimics OpenAI chat completions API."""
     try:
         data = request.json
-        logger.info(f"Received request: {data}")
+        logger.info(f"Processing chat completion request with {len(data.get('messages', []))} messages")
 
         # Extract the last message
         messages = data.get('messages', [])
@@ -178,11 +209,15 @@ def chat_completions():
             }
         }
 
+        logger.info(f"Returning response with {len(response_text)} characters")
         return jsonify(response)
 
     except Exception as e:
-        logger.error(f"Error processing request: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error processing request: {e}", exc_info=True)
+        return jsonify({
+            "error": str(e),
+            "type": type(e).__name__
+        }), 500
 
 @app.route('/health', methods=['GET'])
 def health():
