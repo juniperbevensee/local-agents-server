@@ -1,0 +1,26 @@
+{
+  "model": "openai/gpt-oss-20b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "=== CONVERSATION CONTEXT ===\nBiome: Investigation\n=======================\n\nThe conversation follows:"
+    },
+    {
+      "role": "user",
+      "content": "[audrey hepburn (actor-fa) at 2025-12-01T23:12:02]:\nI need help with Int data api. The purpose is to aid investigators."
+    },
+    {
+      "role": "assistant",
+      "content": "Great! I'm ready to help you get that local Flask server running."
+    },
+    {
+      "role": "user",
+      "content": "[audrey hepburn (actor-fa) at 2025-12-01T23:22:37.551Z]:\nPlease summarize https://news.ycombinator.com"
+    }
+  ],
+  "stream": false,
+  "options": {
+    "temperature": 0.7,
+    "num_predict": 4096
+  }
+}
