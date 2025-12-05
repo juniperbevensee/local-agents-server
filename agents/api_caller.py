@@ -66,7 +66,7 @@ class APICallerAgent(BaseAgent):
         return False
 
     def process(self, message: str, full_context: Dict[str, Any]) -> str:
-        """Process API call request."""
+        """Process API call request with intelligent retry on errors."""
         logger.info(f"API Caller Agent: Processing request")
 
         # Extract components from message
@@ -93,26 +93,64 @@ class APICallerAgent(BaseAgent):
         if docs_content.startswith("Error"):
             return docs_content
 
-        # Step 2: Use LLM to understand the request and form API call
-        logger.info("Step 2: Using LLM to parse documentation and form API call...")
-        api_call_info = self._form_api_call_with_llm(
-            docs_content,
-            request_text,
-            api_base_url
-        )
+        # Step 2: Use LLM to understand the request and form API call (with retry logic)
+        max_retries = 2
+        api_call_info = None
+        result = None
+        previous_error = None
 
-        if not api_call_info or 'error' in api_call_info:
-            return f"Error forming API call: {api_call_info.get('error', 'Unknown error')}"
+        for attempt in range(max_retries):
+            if attempt > 0:
+                logger.info(f"Retry attempt {attempt}/{max_retries - 1}...")
 
-        # Step 3: Execute the API call
-        logger.info("Step 3: Executing API call...")
-        logger.info(f"  Method: {api_call_info.get('method')}")
-        logger.info(f"  URL: {api_call_info.get('url')}")
+            # Form API call (include previous error if retrying)
+            logger.info(f"Step 2.{attempt + 1}: Using LLM to {'parse documentation' if attempt == 0 else 'fix API call based on error'}...")
+            api_call_info = self._form_api_call_with_llm(
+                docs_content,
+                request_text,
+                api_base_url,
+                previous_error=previous_error
+            )
 
-        result = self._execute_api_call(api_call_info)
+            if not api_call_info or 'error' in api_call_info:
+                return f"Error forming API call: {api_call_info.get('error', 'Unknown error')}"
+
+            # Step 3: Execute the API call
+            logger.info(f"Step 3.{attempt + 1}: Executing API call...")
+            logger.info(f"  Method: {api_call_info.get('method')}")
+            logger.info(f"  URL: {api_call_info.get('url')}")
+
+            result = self._execute_api_call(api_call_info)
+
+            # Check if successful
+            if result.get('success'):
+                logger.info("✓ API call successful!")
+                break
+            else:
+                # Failed - prepare error info for retry
+                logger.warning(f"✗ API call failed with status {result.get('status_code')}")
+
+                # Only retry on client errors (4xx) that might be fixable
+                status_code = result.get('status_code', 0)
+                if 400 <= status_code < 500 and attempt < max_retries - 1:
+                    previous_error = {
+                        'status_code': status_code,
+                        'error_response': result.get('data'),
+                        'attempted_request': {
+                            'method': api_call_info.get('method'),
+                            'url': api_call_info.get('url'),
+                            'headers': api_call_info.get('headers'),
+                            'body': api_call_info.get('body'),
+                            'params': api_call_info.get('params')
+                        }
+                    }
+                    logger.info("This looks like a parameter error. Will retry with corrected request...")
+                else:
+                    # Don't retry on server errors (5xx) or if out of retries
+                    break
 
         # Step 4: Format and return response
-        return self._format_response(api_call_info, result)
+        return self._format_response(api_call_info, result, retry_count=attempt)
 
     def _extract_request_components(self, message: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
@@ -186,14 +224,43 @@ class APICallerAgent(BaseAgent):
         self,
         docs_content: str,
         request_text: str,
-        api_base_url: Optional[str]
+        api_base_url: Optional[str],
+        previous_error: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Use LLM to parse documentation and form an API call.
+        If previous_error is provided, the LLM will attempt to fix the request.
 
         Returns dict with: method, url, headers, body, params
         """
         try:
+            # Build error context if this is a retry
+            error_context = ""
+            if previous_error:
+                error_context = f"""
+PREVIOUS ATTEMPT FAILED:
+The previous API call failed with the following error:
+
+Status Code: {previous_error['status_code']}
+
+Error Response:
+{json.dumps(previous_error['error_response'], indent=2)}
+
+Failed Request:
+Method: {previous_error['attempted_request']['method']}
+URL: {previous_error['attempted_request']['url']}
+Headers: {json.dumps(previous_error['attempted_request']['headers'], indent=2)}
+Body: {json.dumps(previous_error['attempted_request']['body'], indent=2) if previous_error['attempted_request']['body'] else 'None'}
+Params: {json.dumps(previous_error['attempted_request']['params'], indent=2) if previous_error['attempted_request']['params'] else 'None'}
+
+Please analyze the error and fix the API call. Pay special attention to:
+- Required vs optional parameters
+- Correct parameter names (check the documentation carefully)
+- Proper data types for each parameter
+- Required headers
+
+"""
+
             # Build a detailed prompt for the LLM
             prompt = f"""You are an API expert. Based on the API documentation below, I need you to form a valid API request.
 
@@ -203,6 +270,8 @@ API Documentation:
 {'Base API URL: ' + api_base_url if api_base_url else 'Please extract the base API URL from the documentation.'}
 
 User Request: {request_text}
+
+{error_context}
 
 Please analyze the documentation and provide ONLY a JSON response (no other text) with the following structure:
 {{
@@ -219,6 +288,7 @@ Important:
 - Include all required headers (like Content-Type, Authorization if needed)
 - If authentication is required, note it in headers with a placeholder like "YOUR_API_KEY"
 - Return ONLY valid JSON, no markdown formatting or code blocks
+- READ THE DOCUMENTATION CAREFULLY to get parameter names exactly right
 """
 
             payload = {
@@ -317,9 +387,17 @@ Important:
                 "error": str(e)
             }
 
-    def _format_response(self, api_call_info: Dict[str, Any], result: Dict[str, Any]) -> str:
+    def _format_response(self, api_call_info: Dict[str, Any], result: Dict[str, Any], retry_count: int = 0) -> str:
         """Format the API response for the user."""
         response = "API Call Result\n" + "="*60 + "\n\n"
+
+        # Show retry info if retried
+        if retry_count > 0:
+            if result.get('success'):
+                response += f"✓ **Success after {retry_count} {'retry' if retry_count == 1 else 'retries'}!**\n"
+                response += f"The LLM analyzed the error and corrected the API call.\n\n"
+            else:
+                response += f"⚠️ Failed after {retry_count} {'retry' if retry_count == 1 else 'retries'}.\n\n"
 
         # Show what was called
         response += f"**Request Made:**\n"
