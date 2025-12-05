@@ -185,40 +185,145 @@ class APICallerAgent(BaseAgent):
         return docs_url, api_base_url, request_text
 
     def _fetch_documentation(self, url: str) -> str:
-        """Fetch and extract text from documentation URL."""
-        try:
-            logger.info(f"Fetching documentation from: {url}")
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-            response.raise_for_status()
+        """
+        Fetch and extract text from documentation URL.
+        Intelligently follows links to gather complete API documentation.
+        """
+        from urllib.parse import urljoin, urlparse
 
-            # Parse HTML and extract text
-            soup = BeautifulSoup(response.content, 'html.parser')
+        max_pages = 11  # Initial page + 10 additional pages
+        visited_urls = set()
+        docs_content = []
+        links_to_visit = [url]
 
-            # Remove script and style elements
-            for script in soup(["script", "style"]):
-                script.decompose()
+        logger.info(f"Starting documentation crawl from: {url}")
+        logger.info(f"Will visit up to {max_pages} pages to find complete documentation")
 
-            # Get text
-            text = soup.get_text()
+        base_domain = urlparse(url).netloc
 
-            # Clean up text
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            text = '\n'.join(chunk for chunk in chunks if chunk)
+        for page_num in range(max_pages):
+            if not links_to_visit:
+                break
 
-            # Limit size for LLM processing
-            if len(text) > MAX_CONTENT_LENGTH:
-                text = text[:MAX_CONTENT_LENGTH] + "\n\n[Documentation truncated - showing first portion]"
+            current_url = links_to_visit.pop(0)
 
-            logger.info(f"Successfully fetched {len(text)} characters of documentation")
-            return text
+            # Skip if already visited
+            if current_url in visited_urls:
+                continue
 
-        except Exception as e:
-            logger.error(f"Error fetching documentation: {e}")
-            return f"Error fetching documentation: {str(e)}"
+            visited_urls.add(current_url)
+
+            try:
+                logger.info(f"Page {page_num + 1}/{max_pages}: Fetching {current_url}")
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                response = requests.get(current_url, headers=headers, timeout=REQUEST_TIMEOUT)
+                response.raise_for_status()
+
+                # Parse HTML
+                soup = BeautifulSoup(response.content, 'html.parser')
+
+                # Extract links for potential follow-up (only from first page)
+                if page_num == 0:
+                    relevant_links = self._extract_relevant_links(soup, current_url, base_domain)
+                    links_to_visit.extend(relevant_links[:10])  # Limit to top 10 most relevant
+                    if relevant_links:
+                        logger.info(f"Found {len(relevant_links)} relevant documentation links to explore")
+
+                # Remove script and style elements
+                for script in soup(["script", "style"]):
+                    script.decompose()
+
+                # Get text
+                text = soup.get_text()
+
+                # Clean up text
+                lines = (line.strip() for line in text.splitlines())
+                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                text = '\n'.join(chunk for chunk in chunks if chunk)
+
+                # Add page marker and content
+                page_title = soup.title.string if soup.title else "Documentation Page"
+                docs_content.append(f"\n{'='*60}\n")
+                docs_content.append(f"Page: {page_title}\n")
+                docs_content.append(f"URL: {current_url}\n")
+                docs_content.append(f"{'='*60}\n\n")
+                docs_content.append(text)
+
+            except Exception as e:
+                logger.warning(f"Error fetching {current_url}: {e}")
+                continue
+
+        # Combine all documentation
+        combined_docs = '\n\n'.join(docs_content)
+
+        # Limit total size
+        if len(combined_docs) > MAX_CONTENT_LENGTH * 2:  # Allow 2x for multiple pages
+            combined_docs = combined_docs[:MAX_CONTENT_LENGTH * 2] + "\n\n[Documentation truncated - showing first portion]"
+
+        logger.info(f"Successfully fetched {len(visited_urls)} pages, total {len(combined_docs)} characters")
+        return combined_docs
+
+    def _extract_relevant_links(self, soup: BeautifulSoup, base_url: str, base_domain: str) -> list:
+        """
+        Extract relevant documentation links from a page.
+        Prioritizes links that likely contain API information.
+        """
+        from urllib.parse import urljoin, urlparse
+
+        relevant_keywords = [
+            'api', 'endpoint', 'reference', 'auth', 'authentication',
+            'request', 'response', 'parameter', 'method', 'rest',
+            'guide', 'tutorial', 'example', 'usage', 'getting-started',
+            'quickstart', 'integration', 'sdk'
+        ]
+
+        links = []
+        seen_urls = set()
+
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag['href']
+
+            # Convert relative URLs to absolute
+            absolute_url = urljoin(base_url, href)
+
+            # Parse URL
+            parsed = urlparse(absolute_url)
+
+            # Only follow links on the same domain
+            if parsed.netloc != base_domain:
+                continue
+
+            # Skip anchors, downloads, etc
+            if parsed.fragment or any(ext in parsed.path.lower() for ext in ['.pdf', '.zip', '.tar', '.gz']):
+                continue
+
+            # Remove fragment
+            clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            if parsed.query:
+                clean_url += f"?{parsed.query}"
+
+            # Skip duplicates
+            if clean_url in seen_urls:
+                continue
+            seen_urls.add(clean_url)
+
+            # Check if link text or URL contains relevant keywords
+            link_text = a_tag.get_text().lower()
+            url_lower = clean_url.lower()
+
+            relevance_score = 0
+            for keyword in relevant_keywords:
+                if keyword in link_text or keyword in url_lower:
+                    relevance_score += 1
+
+            if relevance_score > 0:
+                links.append((relevance_score, clean_url))
+
+        # Sort by relevance and return URLs
+        links.sort(reverse=True, key=lambda x: x[0])
+        return [url for score, url in links]
 
     def _form_api_call_with_llm(
         self,

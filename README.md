@@ -96,16 +96,19 @@ api_call: docs=https://api.stripe.com/docs Create a customer with email test@exa
 ```
 
 **How it works:**
-1. Fetches the API documentation
-2. Uses LLM to understand the docs and your natural language request
-3. Forms the appropriate API call (method, URL, headers, body)
-4. Executes the call
-5. Returns formatted results
+1. **Intelligent Documentation Crawling**: Fetches the initial docs page and automatically follows up to 10 relevant links (API reference, authentication, endpoints, examples, etc.)
+2. **Context Accumulation**: Gathers information from multiple pages to build complete understanding (headers, auth methods, parameters)
+3. **LLM Analysis**: Sends all documentation to LLM which understands your natural language request
+4. **API Call Formation**: LLM forms the appropriate API call (method, URL, headers, body, params)
+5. **Execution & Retry**: Executes the call; if it fails with a 4xx error, automatically retries with corrected parameters
+6. **Formatted Results**: Returns clear, formatted response with success/failure status
 
-**Notes:**
-- If endpoint URL is omitted, the agent will try to extract it from the docs
-- Authentication placeholders will be added if the API requires auth
-- Works with REST APIs that have documentation pages
+**Advanced Features:**
+- **Multi-page crawling**: Automatically explores documentation to find endpoints, auth methods, and examples
+- **Intelligent retries**: If the first attempt fails, analyzes the error and corrects the request automatically
+- **Context-aware**: Remembers authentication requirements and headers from across multiple doc pages
+- **Automatic endpoint discovery**: Can find API base URL from documentation
+- Works with REST APIs that have web-based documentation pages
 
 ---
 
