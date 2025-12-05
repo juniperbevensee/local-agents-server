@@ -26,6 +26,11 @@ A modular Python Flask server that provides specialized agents for various tasks
 git clone <repository-url>
 cd local-agents-server
 
+# Starter script
+./start.sh
+
+OR
+
 # Create virtual environment
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
@@ -43,19 +48,9 @@ pip install -r requirements.txt
 
 ### 4. Start the Agent Server
 
-you can mostly just run the './start.sh but may need some config.
+you can mostly just run the './start.sh but otherwise
 
-pip install -r requirements.txt
-
-pip install --upgrade setuptools
-
-pip install lxml
-
-```bash
-# Quick start
-./start.sh
-
-# Or manually
+```
 python agent.py
 ```
 
