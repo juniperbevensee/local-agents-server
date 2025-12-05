@@ -30,10 +30,14 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Register all available agents here
+# IMPORTANT: Order matters! Most specific agents first, general ones last.
+# APICallerAgent checks for "api_call:" or "docs=" (specific)
+# FileReaderAgent checks for "file:" or file extensions (specific)
+# URLFetcherAgent checks for any URL (general - catches everything)
 AGENTS = [
-    URLFetcherAgent(),
-    FileReaderAgent(),
-    APICallerAgent(),
+    APICallerAgent(),      # Most specific - api_call: or docs=
+    FileReaderAgent(),     # Specific - file: or extensions
+    URLFetcherAgent(),     # General - any URL
 ]
 
 
