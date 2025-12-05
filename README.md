@@ -7,6 +7,7 @@ A modular Python Flask server that provides specialized agents for various tasks
 - **Modular Agent System**: Easily add new agents with a simple template
 - **URL Fetcher Agent**: Fetches and summarizes web content
 - **File Reader Agent**: Reads and summarizes local files (JSON, CSV, PDF, TXT, MD, LOG)
+- **API Caller Agent**: Intelligently calls APIs by reading documentation and forming requests from natural language
 - **HELP Endpoint**: Discover all available tools
 - **OpenAI-Compatible API**: Works with any OpenAI-compatible client
 - **Detailed Logging**: See exactly what's happening with each request
@@ -86,6 +87,31 @@ Analyze ~/Documents/report.csv
 
 ---
 
+### 3. API Caller Agent
+
+Intelligently calls APIs by reading their documentation and forming requests based on natural language. The LLM reads the API docs, understands your request, forms the API call, and executes it!
+
+**Usage:**
+```
+api_call: docs=https://api.github.com/docs endpoint=https://api.github.com Get my repositories
+api_call: docs=https://jsonplaceholder.typicode.com/guide endpoint=https://jsonplaceholder.typicode.com Get all posts
+api_call: docs=https://api.stripe.com/docs Create a customer with email test@example.com
+```
+
+**How it works:**
+1. Fetches the API documentation
+2. Uses LLM to understand the docs and your natural language request
+3. Forms the appropriate API call (method, URL, headers, body)
+4. Executes the call
+5. Returns formatted results
+
+**Notes:**
+- If endpoint URL is omitted, the agent will try to extract it from the docs
+- Authentication placeholders will be added if the API requires auth
+- Works with REST APIs that have documentation pages
+
+---
+
 ## API Endpoints
 
 ### POST `/v1/chat/completions`
@@ -156,6 +182,19 @@ Root endpoint showing service info and available agents.
     {
       "role": "user",
       "content": "Analyze file:~/Documents/report.pdf"
+    }
+  ]
+}
+```
+
+### Example 4: Call an API
+
+```json
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "api_call: docs=https://jsonplaceholder.typicode.com endpoint=https://jsonplaceholder.typicode.com Get all posts"
     }
   ]
 }
