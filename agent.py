@@ -18,6 +18,7 @@ from config import (
 # Import agents
 from agents.url_fetcher import URLFetcherAgent
 from agents.file_reader import FileReaderAgent
+from agents.api_caller import APICallerAgent
 
 # Configure logging with more detail
 logging.basicConfig(
@@ -32,6 +33,7 @@ app = Flask(__name__)
 AGENTS = [
     URLFetcherAgent(),
     FileReaderAgent(),
+    APICallerAgent(),
 ]
 
 
