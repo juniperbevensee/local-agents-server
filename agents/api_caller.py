@@ -188,8 +188,22 @@ class APICallerAgent(BaseAgent):
         """
         Fetch and extract text from documentation URL.
         Intelligently follows links to gather complete API documentation.
+        Special handling for OpenAPI/Swagger JSON specs.
         """
         from urllib.parse import urljoin, urlparse
+
+        # Check if this is an OpenAPI/Swagger JSON spec
+        if url.endswith('.json') or 'openapi.json' in url or 'swagger.json' in url:
+            logger.info("Detected OpenAPI JSON spec - will parse as structured API definition")
+            return self._fetch_openapi_spec(url)
+
+        # Check if this is a Redoc/Swagger UI page - try to extract the spec URL
+        if 'redoc' in url.lower() or 'swagger' in url.lower():
+            logger.info("Detected API documentation viewer - looking for OpenAPI spec URL")
+            spec_url = self._extract_openapi_spec_url(url)
+            if spec_url:
+                logger.info(f"Found OpenAPI spec URL: {spec_url}")
+                return self._fetch_openapi_spec(spec_url)
 
         max_pages = 11  # Initial page + 10 additional pages
         visited_urls = set()
@@ -324,6 +338,163 @@ class APICallerAgent(BaseAgent):
         # Sort by relevance and return URLs
         links.sort(reverse=True, key=lambda x: x[0])
         return [url for score, url in links]
+
+    def _extract_openapi_spec_url(self, page_url: str) -> Optional[str]:
+        """
+        Extract OpenAPI spec URL from Redoc/Swagger UI pages.
+        """
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(page_url, headers=headers, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+
+            content = response.text
+
+            # Look for spec-url or url parameter in Redoc
+            import re
+            patterns = [
+                r'spec-url=["\']([^"\']+)["\']',
+                r'url:\s*["\']([^"\']+)["\']',
+                r'url=([^&\s]+)',
+                r'"specUrl":\s*"([^"]+)"',
+            ]
+
+            for pattern in patterns:
+                match = re.search(pattern, content)
+                if match:
+                    spec_url = match.group(1)
+                    # Make absolute if relative
+                    if not spec_url.startswith('http'):
+                        from urllib.parse import urljoin
+                        spec_url = urljoin(page_url, spec_url)
+                    return spec_url
+
+            return None
+        except Exception as e:
+            logger.warning(f"Could not extract spec URL: {e}")
+            return None
+
+    def _fetch_openapi_spec(self, spec_url: str) -> str:
+        """
+        Fetch and parse OpenAPI JSON spec into readable documentation.
+        Extracts endpoints, parameters, schemas, enums, etc.
+        """
+        try:
+            logger.info(f"Fetching OpenAPI spec from: {spec_url}")
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(spec_url, headers=headers, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+
+            spec = response.json()
+
+            # Format the spec into readable documentation
+            docs = []
+            docs.append("="*60)
+            docs.append("API SPECIFICATION (OpenAPI/Swagger)")
+            docs.append("="*60)
+            docs.append("")
+
+            # API Info
+            if 'info' in spec:
+                info = spec['info']
+                docs.append(f"API: {info.get('title', 'Unknown')}")
+                docs.append(f"Version: {info.get('version', 'Unknown')}")
+                if 'description' in info:
+                    docs.append(f"Description: {info['description']}")
+                docs.append("")
+
+            # Servers/Base URLs
+            if 'servers' in spec:
+                docs.append("Base URLs:")
+                for server in spec['servers']:
+                    docs.append(f"  - {server.get('url')}")
+                docs.append("")
+
+            # Security/Authentication
+            if 'securitySchemes' in spec.get('components', {}):
+                docs.append("Authentication:")
+                for name, scheme in spec['components']['securitySchemes'].items():
+                    docs.append(f"  - {name}: {scheme.get('type')} ({scheme.get('scheme', 'N/A')})")
+                docs.append("")
+
+            # Endpoints/Paths
+            if 'paths' in spec:
+                docs.append("ENDPOINTS:")
+                docs.append("="*60)
+                for path, methods in spec['paths'].items():
+                    for method, details in methods.items():
+                        if method.upper() in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']:
+                            docs.append(f"\n{method.upper()} {path}")
+                            if 'summary' in details:
+                                docs.append(f"  Summary: {details['summary']}")
+                            if 'description' in details:
+                                docs.append(f"  Description: {details['description']}")
+
+                            # Parameters
+                            if 'parameters' in details:
+                                docs.append("  Parameters:")
+                                for param in details['parameters']:
+                                    param_name = param.get('name')
+                                    param_in = param.get('in')
+                                    required = param.get('required', False)
+                                    param_type = param.get('schema', {}).get('type', 'unknown')
+
+                                    # Extract enum values if present
+                                    enum_values = param.get('schema', {}).get('enum', [])
+                                    enum_str = f" (valid values: {', '.join(map(str, enum_values))})" if enum_values else ""
+
+                                    req_str = "[REQUIRED]" if required else "[optional]"
+                                    docs.append(f"    - {param_name} ({param_in}) {req_str}: {param_type}{enum_str}")
+
+                                    if 'description' in param:
+                                        docs.append(f"      Description: {param['description']}")
+
+                            # Request body
+                            if 'requestBody' in details:
+                                docs.append("  Request Body:")
+                                req_body = details['requestBody']
+                                if 'content' in req_body:
+                                    for content_type, content_spec in req_body['content'].items():
+                                        docs.append(f"    Content-Type: {content_type}")
+                                        if 'schema' in content_spec:
+                                            docs.append(f"    Schema: {json.dumps(content_spec['schema'], indent=6)}")
+
+                            # Responses
+                            if 'responses' in details:
+                                docs.append("  Responses:")
+                                for code, response in details['responses'].items():
+                                    docs.append(f"    {code}: {response.get('description', 'No description')}")
+
+            # Schemas/Models
+            if 'schemas' in spec.get('components', {}):
+                docs.append("\n" + "="*60)
+                docs.append("DATA MODELS:")
+                docs.append("="*60)
+                for schema_name, schema_def in list(spec['components']['schemas'].items())[:10]:  # Limit to first 10
+                    docs.append(f"\n{schema_name}:")
+                    if 'properties' in schema_def:
+                        docs.append("  Properties:")
+                        for prop_name, prop_def in schema_def['properties'].items():
+                            prop_type = prop_def.get('type', 'unknown')
+                            enum_values = prop_def.get('enum', [])
+                            enum_str = f" (valid values: {', '.join(map(str, enum_values))})" if enum_values else ""
+                            docs.append(f"    - {prop_name}: {prop_type}{enum_str}")
+
+            combined_docs = '\n'.join(docs)
+            logger.info(f"Successfully parsed OpenAPI spec: {len(combined_docs)} characters")
+            return combined_docs
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in OpenAPI spec: {e}")
+            # Fall back to raw content
+            return f"Error parsing OpenAPI spec as JSON: {str(e)}\n\nRaw content:\n{response.text[:2000]}"
+        except Exception as e:
+            logger.error(f"Error fetching OpenAPI spec: {e}")
+            return f"Error fetching OpenAPI spec: {str(e)}"
 
     def _form_api_call_with_llm(
         self,
