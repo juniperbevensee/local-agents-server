@@ -70,7 +70,7 @@ class APICallerAgent(BaseAgent):
         logger.info(f"API Caller Agent: Processing request")
 
         # Extract components from message
-        docs_url, api_base_url, request_text = self._extract_request_components(message)
+        docs_url, api_base_url, api_key, request_text = self._extract_request_components(message)
 
         if not docs_url:
             return (
@@ -109,6 +109,7 @@ class APICallerAgent(BaseAgent):
                 docs_content,
                 request_text,
                 api_base_url,
+                api_key=api_key,
                 previous_error=previous_error
             )
 
@@ -152,15 +153,16 @@ class APICallerAgent(BaseAgent):
         # Step 4: Format and return response
         return self._format_response(api_call_info, result, retry_count=attempt)
 
-    def _extract_request_components(self, message: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    def _extract_request_components(self, message: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
         """
-        Extract docs URL, API base URL, and request text from message.
+        Extract docs URL, API base URL, API key, and request text from message.
 
         Returns:
-            (docs_url, api_base_url, request_text)
+            (docs_url, api_base_url, api_key, request_text)
         """
         docs_url = None
         api_base_url = None
+        api_key = None
         request_text = None
 
         # Extract docs URL
@@ -173,16 +175,23 @@ class APICallerAgent(BaseAgent):
         if endpoint_match:
             api_base_url = endpoint_match.group(1)
 
-        # Extract request text (everything after the URLs)
-        # Remove the api_call: prefix and URL parameters
+        # Extract API key
+        key_match = re.search(r'key:\s*([^\s]+)', message, re.IGNORECASE)
+        if key_match:
+            api_key = key_match.group(1).strip()
+            logger.info(f"API key provided: {api_key[:10]}..." if len(api_key) > 10 else "API key provided")
+
+        # Extract request text (everything after the URLs and key)
+        # Remove the api_call: prefix and URL/key parameters
         text = message
         text = re.sub(r'api_call:\s*', '', text, flags=re.IGNORECASE)
         text = re.sub(r'docs=https?://[^\s]+\s*', '', text, flags=re.IGNORECASE)
         text = re.sub(r'endpoint=https?://[^\s]+\s*', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'key:\s*[^\s]+\s*', '', text, flags=re.IGNORECASE)
 
         request_text = text.strip()
 
-        return docs_url, api_base_url, request_text
+        return docs_url, api_base_url, api_key, request_text
 
     def _fetch_documentation(self, url: str) -> str:
         """
@@ -501,11 +510,13 @@ class APICallerAgent(BaseAgent):
         docs_content: str,
         request_text: str,
         api_base_url: Optional[str],
+        api_key: Optional[str] = None,
         previous_error: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Use LLM to parse documentation and form an API call.
         If previous_error is provided, the LLM will attempt to fix the request.
+        If api_key is provided, adds it to the Authorization header.
 
         Returns dict with: method, url, headers, body, params
         """
@@ -606,6 +617,28 @@ Important:
 
             # Parse JSON
             api_call_info = json.loads(llm_response)
+
+            # Add API key to headers if provided
+            if api_key:
+                if 'headers' not in api_call_info:
+                    api_call_info['headers'] = {}
+
+                # Add API key to Authorization header
+                # Support common auth header formats
+                if 'Authorization' not in api_call_info['headers']:
+                    # Check if docs mention Bearer token
+                    if 'bearer' in docs_content.lower():
+                        api_call_info['headers']['Authorization'] = f'Bearer {api_key}'
+                    # Check if docs mention API key header
+                    elif 'x-api-key' in docs_content.lower():
+                        api_call_info['headers']['X-API-Key'] = api_key
+                    elif 'apikey' in docs_content.lower():
+                        api_call_info['headers']['ApiKey'] = api_key
+                    else:
+                        # Default to ApiKey header
+                        api_call_info['headers']['ApiKey'] = api_key
+
+                    logger.info(f"Added API key to headers")
 
             logger.info("Successfully formed API call:")
             logger.info(f"  Method: {api_call_info.get('method')}")
