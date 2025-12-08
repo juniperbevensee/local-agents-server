@@ -96,7 +96,13 @@ Intelligently calls APIs by reading their documentation and forming requests bas
 api_call: docs=https://api.github.com/docs endpoint=https://api.github.com Get my repositories
 api_call: docs=https://jsonplaceholder.typicode.com/guide endpoint=https://jsonplaceholder.typicode.com Get all posts
 api_call: docs=https://api.stripe.com/docs Create a customer with email test@example.com
+api_call: docs=https://aleph.occrp.org/api/openapi.json key:YOUR_API_KEY_HERE Find entities related to "Trump Organization"
 ```
+
+**Optional Parameters:**
+- `docs=<url>` - **Required**: URL to API documentation
+- `endpoint=<url>` - Optional: API base URL (auto-detected from docs if omitted)
+- `key:<api_key>` - Optional: API key for authentication (automatically added to appropriate header)
 
 **How it works:**
 1. **Intelligent Documentation Crawling**: Fetches the initial docs page and automatically follows up to 10 relevant links (API reference, authentication, endpoints, examples, etc.)
@@ -107,8 +113,10 @@ api_call: docs=https://api.stripe.com/docs Create a customer with email test@exa
 6. **Formatted Results**: Returns clear, formatted response with success/failure status
 
 **Advanced Features:**
+- **OpenAPI/Swagger parsing**: Auto-detects and parses OpenAPI specs to get exact parameter names, enums, and schemas
 - **Multi-page crawling**: Automatically explores documentation to find endpoints, auth methods, and examples
 - **Intelligent retries**: If the first attempt fails, analyzes the error and corrects the request automatically
+- **API key support**: Provide your API key via `key:` parameter - automatically added to correct auth header
 - **Context-aware**: Remembers authentication requirements and headers from across multiple doc pages
 - **Automatic endpoint discovery**: Can find API base URL from documentation
 - Works with REST APIs that have web-based documentation pages
