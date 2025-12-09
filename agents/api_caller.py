@@ -762,7 +762,14 @@ Important:
             body = api_call_info.get('body')
             params = api_call_info.get('params')
 
-            logger.info(f"Executing {method} {url}")
+            # Build the complete URL with query parameters for logging and display
+            from urllib.parse import urlencode
+            full_url = url
+            if params:
+                param_string = urlencode(params)
+                full_url = f"{url}?{param_string}"
+
+            logger.info(f"Executing {method} {full_url}")
 
             # Make the API call
             response = requests.request(
@@ -784,7 +791,8 @@ Important:
                 "status_code": response.status_code,
                 "success": response.ok,
                 "data": response_data,
-                "headers": dict(response.headers)
+                "headers": dict(response.headers),
+                "full_url": full_url  # Include the complete URL with params
             }
 
         except Exception as e:
@@ -810,7 +818,10 @@ Important:
         # Show what was called
         response += f"**Request Made:**\n"
         response += f"  Method: {api_call_info.get('method')}\n"
-        response += f"  URL: {api_call_info.get('url')}\n"
+
+        # Show the full URL with query parameters if available
+        full_url = result.get('full_url', api_call_info.get('url'))
+        response += f"  URL: {full_url}\n"
 
         if api_call_info.get('explanation'):
             response += f"  Purpose: {api_call_info.get('explanation')}\n"
