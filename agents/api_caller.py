@@ -214,6 +214,14 @@ class APICallerAgent(BaseAgent):
                 logger.info(f"Found OpenAPI spec URL: {spec_url}")
                 return self._fetch_openapi_spec(spec_url)
 
+        # For regular HTML pages, try to find OpenAPI spec links before falling back to HTML parsing
+        logger.info("Searching for OpenAPI/Swagger spec links in documentation...")
+        spec_url = self._find_openapi_spec_in_page(url)
+        if spec_url:
+            logger.info(f"Found OpenAPI spec link: {spec_url}")
+            logger.info("Using structured API spec instead of HTML parsing for better accuracy")
+            return self._fetch_openapi_spec(spec_url)
+
         max_pages = 11  # Initial page + 10 additional pages
         visited_urls = set()
         docs_content = []
@@ -347,6 +355,97 @@ class APICallerAgent(BaseAgent):
         # Sort by relevance and return URLs
         links.sort(reverse=True, key=lambda x: x[0])
         return [url for score, url in links]
+
+    def _find_openapi_spec_in_page(self, page_url: str) -> Optional[str]:
+        """
+        Search for OpenAPI/Swagger spec links in HTML documentation page.
+        Looks for common spec file names in links and references.
+        """
+        try:
+            from urllib.parse import urljoin
+
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(page_url, headers=headers, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+
+            # Parse HTML
+            soup = BeautifulSoup(response.content, 'html.parser')
+
+            # Common OpenAPI spec file patterns
+            spec_patterns = [
+                'openapi.json',
+                'swagger.json',
+                'api-docs.json',
+                'openapi.yaml',
+                'swagger.yaml',
+                'api-spec.json',
+                'api.json',
+            ]
+
+            # Look for links in <a> tags
+            for a_tag in soup.find_all('a', href=True):
+                href = a_tag['href'].lower()
+                for pattern in spec_patterns:
+                    if pattern in href:
+                        spec_url = a_tag['href']
+                        # Make absolute if relative
+                        if not spec_url.startswith('http'):
+                            spec_url = urljoin(page_url, spec_url)
+                        logger.info(f"Found spec link in <a> tag: {spec_url}")
+                        return spec_url
+
+            # Look for spec URLs in script tags or inline JavaScript
+            for script in soup.find_all('script'):
+                if script.string:
+                    for pattern in spec_patterns:
+                        if pattern in script.string:
+                            # Try to extract the URL
+                            matches = re.findall(r'["\']([^"\']*' + re.escape(pattern) + r')["\']', script.string)
+                            if matches:
+                                spec_url = matches[0]
+                                if not spec_url.startswith('http'):
+                                    spec_url = urljoin(page_url, spec_url)
+                                logger.info(f"Found spec URL in script: {spec_url}")
+                                return spec_url
+
+            # Look in the page text/content for spec URLs
+            page_text = soup.get_text()
+            for pattern in spec_patterns:
+                # Look for URLs containing the pattern
+                url_match = re.search(r'https?://[^\s<>"{}|\\^`\[\]]*' + re.escape(pattern), page_text)
+                if url_match:
+                    spec_url = url_match.group(0)
+                    logger.info(f"Found spec URL in page text: {spec_url}")
+                    return spec_url
+
+            # Try common spec URL locations relative to the docs page
+            base_url = page_url.split('/docs')[0] if '/docs' in page_url else page_url.rsplit('/', 1)[0]
+            common_locations = [
+                '/openapi.json',
+                '/swagger.json',
+                '/api/openapi.json',
+                '/api/swagger.json',
+                '/docs/openapi.json',
+                '/docs/swagger.json',
+            ]
+
+            for location in common_locations:
+                potential_spec_url = base_url + location
+                try:
+                    # Quick HEAD request to check if it exists
+                    head_response = requests.head(potential_spec_url, headers=headers, timeout=5)
+                    if head_response.status_code == 200:
+                        logger.info(f"Found spec at common location: {potential_spec_url}")
+                        return potential_spec_url
+                except:
+                    continue
+
+            return None
+        except Exception as e:
+            logger.warning(f"Error searching for OpenAPI spec: {e}")
+            return None
 
     def _extract_openapi_spec_url(self, page_url: str) -> Optional[str]:
         """
