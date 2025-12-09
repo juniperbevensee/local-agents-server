@@ -204,7 +204,11 @@ class APICallerAgent(BaseAgent):
         # Check if this is an OpenAPI/Swagger JSON spec
         if url.endswith('.json') or 'openapi.json' in url or 'swagger.json' in url:
             logger.info("Detected OpenAPI JSON spec - will parse as structured API definition")
-            return self._fetch_openapi_spec(url)
+            spec_result = self._fetch_openapi_spec(url)
+            if spec_result:
+                return spec_result
+            # If it failed, fall through to HTML parsing
+            logger.info("Spec URL didn't contain valid JSON, falling back to HTML parsing")
 
         # Check if this is a Redoc/Swagger UI page - try to extract the spec URL
         if 'redoc' in url.lower() or 'swagger' in url.lower():
@@ -212,7 +216,11 @@ class APICallerAgent(BaseAgent):
             spec_url = self._extract_openapi_spec_url(url)
             if spec_url:
                 logger.info(f"Found OpenAPI spec URL: {spec_url}")
-                return self._fetch_openapi_spec(spec_url)
+                spec_result = self._fetch_openapi_spec(spec_url)
+                if spec_result:
+                    return spec_result
+                # If it failed, fall through to HTML parsing
+                logger.info("Spec URL didn't contain valid JSON, falling back to HTML parsing")
 
         # For regular HTML pages, try to find OpenAPI spec links before falling back to HTML parsing
         logger.info("Searching for OpenAPI/Swagger spec links in documentation...")
@@ -220,7 +228,11 @@ class APICallerAgent(BaseAgent):
         if spec_url:
             logger.info(f"Found OpenAPI spec link: {spec_url}")
             logger.info("Using structured API spec instead of HTML parsing for better accuracy")
-            return self._fetch_openapi_spec(spec_url)
+            spec_result = self._fetch_openapi_spec(spec_url)
+            if spec_result:
+                return spec_result
+            # If it failed, fall through to HTML parsing
+            logger.info("Spec URL didn't contain valid JSON, falling back to HTML parsing")
 
         max_pages = 11  # Initial page + 10 additional pages
         visited_urls = set()
@@ -597,12 +609,13 @@ class APICallerAgent(BaseAgent):
             return combined_docs
 
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in OpenAPI spec: {e}")
-            # Fall back to raw content
-            return f"Error parsing OpenAPI spec as JSON: {str(e)}\n\nRaw content:\n{response.text[:2000]}"
+            logger.warning(f"URL did not contain valid JSON spec: {e}")
+            # Return None to signal that this wasn't a valid spec (will fall back to HTML parsing)
+            return None
         except Exception as e:
-            logger.error(f"Error fetching OpenAPI spec: {e}")
-            return f"Error fetching OpenAPI spec: {str(e)}"
+            logger.warning(f"Could not fetch OpenAPI spec: {e}")
+            # Return None to signal that spec fetch failed (will fall back to HTML parsing)
+            return None
 
     def _form_api_call_with_llm(
         self,
