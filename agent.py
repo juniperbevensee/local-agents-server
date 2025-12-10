@@ -104,6 +104,50 @@ class AgentRouter:
 router = AgentRouter(AGENTS)
 
 
+def _extract_api_keys_from_messages(messages: List[Dict[str, Any]]) -> Dict[str, str]:
+    """
+    Extract API keys from system messages.
+
+    Expected format in system message content:
+        "Open Measures key: abc123, Airtable personal access token: xyz789"
+
+    Returns:
+        Dict mapping platform names to their API keys
+        Example: {"Open Measures": "abc123", "Airtable": "xyz789"}
+    """
+    import re
+
+    api_keys = {}
+
+    # Look for system messages
+    for msg in messages:
+        if msg.get('role') == 'system':
+            content = msg.get('content', '')
+
+            # Pattern: "Platform name key: value" or "Platform name token: value" or "Platform name: value"
+            # Supports formats like:
+            #   "Open Measures key: abc123"
+            #   "Airtable personal access token: xyz789"
+            #   "GitHub: ghp_abc123"
+
+            # Pattern 1: "Name (key|token|api key|access token|personal access token): value"
+            pattern1 = r'([A-Za-z][A-Za-z0-9\s]+?)\s*(?:key|token|api key|access token|personal access token):\s*([^\s,;]+)'
+            matches = re.finditer(pattern1, content, re.IGNORECASE)
+
+            for match in matches:
+                platform = match.group(1).strip()
+                key_value = match.group(2).strip()
+
+                # Normalize platform name
+                platform = platform.strip()
+
+                # Store the key
+                api_keys[platform] = key_value
+                logger.info(f"Extracted API key for '{platform}': {key_value[:10]}...")
+
+    return api_keys
+
+
 # Log all incoming requests
 @app.before_request
 def log_request_info():
@@ -177,6 +221,13 @@ def chat_completions():
 
         last_message = messages[-1]
         content = last_message.get('content', '')
+
+        # Extract API keys from system messages
+        api_keys = _extract_api_keys_from_messages(messages)
+        if api_keys:
+            logger.info(f"Found {len(api_keys)} API key(s) in system messages")
+            # Add to context for agents to use
+            data['_extracted_api_keys'] = api_keys
 
         # Route to appropriate agent
         response_text = router.route(content, data)

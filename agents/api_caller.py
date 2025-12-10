@@ -72,6 +72,27 @@ class APICallerAgent(BaseAgent):
         # Extract components from message
         docs_url, api_base_url, api_key, request_text = self._extract_request_components(message)
 
+        # Extract API keys from system messages if available
+        system_api_keys = full_context.get('_extracted_api_keys', {})
+
+        # If no key was provided in the message, try to find one from system messages
+        if not api_key and system_api_keys:
+            api_key, key_platform = self._match_api_key(docs_url, system_api_keys)
+            if api_key:
+                logger.info(f"Using API key from system message for: {key_platform}")
+
+        # Store keys for masking later
+        self._secrets_to_mask = {}
+        if api_key:
+            # Determine the platform name for masking
+            platform_name = self._guess_platform_name(docs_url)
+            self._secrets_to_mask[api_key] = f"[{platform_name} key]"
+
+        # Also mask all system keys
+        for platform, key in system_api_keys.items():
+            if key not in self._secrets_to_mask:
+                self._secrets_to_mask[key] = f"[{platform} key]"
+
         if not docs_url:
             return (
                 "I need the API documentation URL. Format:\n"
@@ -192,6 +213,121 @@ class APICallerAgent(BaseAgent):
         request_text = text.strip()
 
         return docs_url, api_base_url, api_key, request_text
+
+    def _match_api_key(self, docs_url: str, system_api_keys: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Match an API key from system messages to the API being called.
+
+        Args:
+            docs_url: The documentation URL
+            system_api_keys: Dict of platform names to API keys
+
+        Returns:
+            (api_key, platform_name) or (None, None)
+        """
+        # Extract domain/platform indicators from URL
+        url_lower = docs_url.lower()
+
+        # Check each platform in the system keys
+        for platform, key in system_api_keys.items():
+            platform_lower = platform.lower()
+
+            # Check if platform name appears in URL
+            # e.g., "Open Measures" -> check for "openmeasures" or "open-measures"
+            platform_normalized = platform_lower.replace(' ', '').replace('-', '').replace('_', '')
+
+            if platform_normalized in url_lower.replace('-', '').replace('_', '').replace('.', ''):
+                return key, platform
+
+            # Also check common variations
+            if platform_lower in url_lower:
+                return key, platform
+
+        # No match found
+        return None, None
+
+    def _guess_platform_name(self, docs_url: str) -> str:
+        """
+        Guess platform name from documentation URL for masking purposes.
+
+        Args:
+            docs_url: The documentation URL
+
+        Returns:
+            Platform name string
+        """
+        from urllib.parse import urlparse
+
+        # Parse the domain from URL
+        domain = urlparse(docs_url).netloc
+
+        # Remove common prefixes and TLD
+        domain = domain.replace('www.', '').replace('api.', '').replace('docs.', '')
+
+        # Extract the main name (before first dot)
+        name = domain.split('.')[0]
+
+        # Capitalize first letter
+        return name.capitalize()
+
+    def _mask_secrets(self, text: str) -> str:
+        """
+        Replace actual API key values with masked placeholders.
+
+        Args:
+            text: Text that may contain secrets
+
+        Returns:
+            Text with secrets replaced by placeholders
+        """
+        if not hasattr(self, '_secrets_to_mask') or not self._secrets_to_mask:
+            return text
+
+        masked_text = text
+        for secret, placeholder in self._secrets_to_mask.items():
+            # Replace the actual secret with the placeholder
+            masked_text = masked_text.replace(secret, placeholder)
+
+        return masked_text
+
+    def _format_curl_request(self, api_call_info: Dict[str, Any], full_url: str) -> str:
+        """
+        Format the API request as a curl command.
+
+        Args:
+            api_call_info: API call information
+            full_url: Complete URL with query parameters
+
+        Returns:
+            Formatted curl command string
+        """
+        method = api_call_info.get('method', 'GET').upper()
+        headers = api_call_info.get('headers', {})
+        body = api_call_info.get('body')
+
+        # Start curl command
+        curl_parts = [f'curl -X {method}']
+
+        # Add URL (quoted)
+        curl_parts.append(f'"{full_url}"')
+
+        # Add headers
+        for header_name, header_value in headers.items():
+            # Mask the header value if it contains a secret
+            masked_value = self._mask_secrets(header_value)
+            curl_parts.append(f'-H "{header_name}: {masked_value}"')
+
+        # Add body if present
+        if body:
+            import json
+            body_json = json.dumps(body)
+            masked_body = self._mask_secrets(body_json)
+            curl_parts.append(f"-d '{masked_body}'")
+
+        # Join with backslashes for multi-line format
+        curl_command = ' \\\n  '.join(curl_parts)
+
+        return curl_command
 
     def _fetch_documentation(self, url: str) -> str:
         """
@@ -817,7 +953,7 @@ Important:
             }
 
     def _format_response(self, api_call_info: Dict[str, Any], result: Dict[str, Any], retry_count: int = 0) -> str:
-        """Format the API response for the user."""
+        """Format the API response for the user with secret masking."""
         response = "API Call Result\n" + "="*60 + "\n\n"
 
         # Show retry info if retried
@@ -832,37 +968,53 @@ Important:
         response += f"**Request Made:**\n"
         response += f"  Method: {api_call_info.get('method')}\n"
 
-        # Show the full URL with query parameters if available
+        # Show the full URL with query parameters (masked)
         full_url = result.get('full_url', api_call_info.get('url'))
-        response += f"  URL: {full_url}\n"
+        masked_url = self._mask_secrets(full_url)
+        response += f"  URL: {masked_url}\n"
 
         if api_call_info.get('explanation'):
-            response += f"  Purpose: {api_call_info.get('explanation')}\n"
+            masked_explanation = self._mask_secrets(api_call_info.get('explanation'))
+            response += f"  Purpose: {masked_explanation}\n"
 
         response += "\n"
+
+        # Show curl command
+        response += f"**cURL Command:**\n"
+        response += "```bash\n"
+        curl_command = self._format_curl_request(api_call_info, full_url)
+        response += curl_command
+        response += "\n```\n\n"
 
         # Show result
         if result.get('success'):
             response += f"**Status:** ✓ Success ({result.get('status_code')})\n\n"
             response += f"**Response:**\n"
 
-            # Pretty print the data
+            # Pretty print the data (masked)
             data = result.get('data')
             if isinstance(data, (dict, list)):
                 response += "```json\n"
-                response += json.dumps(data, indent=2)
+                data_json = json.dumps(data, indent=2)
+                masked_data = self._mask_secrets(data_json)
+                response += masked_data
                 response += "\n```\n"
             else:
-                response += str(data)[:1000]  # Limit text responses
+                data_str = str(data)[:1000]
+                masked_data = self._mask_secrets(data_str)
+                response += masked_data
                 if len(str(data)) > 1000:
                     response += "\n\n[Response truncated]"
 
         else:
             response += f"**Status:** ✗ Failed ({result.get('status_code', 'N/A')})\n\n"
-            response += f"**Error:**\n{result.get('error', 'Unknown error')}\n"
+            error_msg = self._mask_secrets(str(result.get('error', 'Unknown error')))
+            response += f"**Error:**\n{error_msg}\n"
 
             if result.get('data'):
-                response += f"\n**Response:**\n{json.dumps(result.get('data'), indent=2)[:500]}\n"
+                data_json = json.dumps(result.get('data'), indent=2)[:500]
+                masked_data = self._mask_secrets(data_json)
+                response += f"\n**Response:**\n{masked_data}\n"
 
         # Add helpful notes
         response += "\n" + "="*60 + "\n"
