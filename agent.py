@@ -141,9 +141,10 @@ def _extract_api_keys_from_messages(messages: List[Dict[str, Any]]) -> Dict[str,
                 logger.info(f"Extracted '{platform}': {key_value}")  # Show full value in logs
 
             # Pattern 2: "Name (base id|table id|database id|project id|workspace id): value"
-            # Also handle variations like BASE_ID, TABLE_ID with optional quotes around platform names
+            # Handle variations like BASE_ID, TABLE_ID with optional quotes around platform names
             # Examples: 'Airtable "upwardOS" BASE_ID: appXYZ' or 'Airtable table id: tblXYZ'
-            pattern2 = r'([A-Za-z][A-Za-z0-9\s"]+?)\s*(?:base[_\s]?id|table[_\s]?id|database[_\s]?id|project[_\s]?id|workspace[_\s]?id|app[_\s]?id):\s*([^\s,;]+)'
+            # Match platform name (word + optional quoted section) + required space + parameter type
+            pattern2 = r'([A-Za-z][A-Za-z0-9]*(?:\s+"[^"]*")?)\s+(?:base[_\s]?id|table[_\s]?id|database[_\s]?id|project[_\s]?id|workspace[_\s]?id|app[_\s]?id):\s*([^\s,;]+)'
             matches2 = re.finditer(pattern2, content, re.IGNORECASE)
 
             for match in matches2:
@@ -153,7 +154,7 @@ def _extract_api_keys_from_messages(messages: List[Dict[str, Any]]) -> Dict[str,
                 # Remove quotes from platform name if present
                 platform = platform.replace('"', '').strip()
 
-                # Find the parameter type (base id, table id, etc.)
+                # Find the parameter type (base id, table id, etc.) from the full match
                 param_type_match = re.search(r'(?:base[_\s]?id|table[_\s]?id|database[_\s]?id|project[_\s]?id|workspace[_\s]?id|app[_\s]?id)', match.group(0), re.IGNORECASE)
                 if param_type_match:
                     param_type = param_type_match.group(0).replace('_', ' ').replace('  ', ' ').lower().strip()
