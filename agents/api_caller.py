@@ -131,6 +131,7 @@ class APICallerAgent(BaseAgent):
                 request_text,
                 api_base_url,
                 api_key=api_key,
+                system_params=system_api_keys,
                 previous_error=previous_error
             )
 
@@ -759,16 +760,28 @@ class APICallerAgent(BaseAgent):
         request_text: str,
         api_base_url: Optional[str],
         api_key: Optional[str] = None,
+        system_params: Optional[Dict[str, str]] = None,
         previous_error: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Use LLM to parse documentation and form an API call.
         If previous_error is provided, the LLM will attempt to fix the request.
         If api_key is provided, adds it to the Authorization header.
+        If system_params is provided, includes base_id, table_id, etc. for the LLM to use.
 
         Returns dict with: method, url, headers, body, params
         """
         try:
+            # Build system parameters context
+            system_params_context = ""
+            if system_params:
+                system_params_context = "\n\nAVAILABLE PARAMETERS FROM SYSTEM:\n"
+                for param_name, param_value in system_params.items():
+                    # Log unmasked values for debugging
+                    logger.info(f"Providing to LLM - {param_name}: {param_value}")
+                    system_params_context += f"- {param_name}: {param_value}\n"
+                system_params_context += "\nIMPORTANT: Use these EXACT values in the URL. For example, if you see 'Airtable base id: appABC123' and 'Airtable table id: tblXYZ789', use these actual IDs in the URL path, not placeholder names like 'projects' or 'YOUR_BASE_ID'.\n"
+
             # Build error context if this is a retry
             error_context = ""
             if previous_error:
@@ -793,6 +806,7 @@ Please analyze the error and fix the API call. Pay special attention to:
 - Correct parameter names (check the documentation carefully)
 - Proper data types for each parameter
 - Required headers
+- Using the actual IDs provided in the system parameters, not placeholder names
 
 """
 
@@ -801,6 +815,7 @@ Please analyze the error and fix the API call. Pay special attention to:
 
 API Documentation:
 {docs_content}
+{system_params_context}
 
 {'Base API URL: ' + api_base_url if api_base_url else 'Please extract the base API URL from the documentation.'}
 
@@ -919,6 +934,11 @@ Important:
                 full_url = f"{url}?{param_string}"
 
             logger.info(f"Executing {method} {full_url}")
+            logger.info(f"Headers: {headers}")
+            if body:
+                logger.info(f"Body: {json.dumps(body, indent=2)}")
+            if params:
+                logger.info(f"Query params: {params}")
 
             # Make the API call
             response = requests.request(
