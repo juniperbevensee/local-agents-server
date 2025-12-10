@@ -141,17 +141,22 @@ def _extract_api_keys_from_messages(messages: List[Dict[str, Any]]) -> Dict[str,
                 logger.info(f"Extracted '{platform}': {key_value}")  # Show full value in logs
 
             # Pattern 2: "Name (base id|table id|database id|project id|workspace id): value"
-            pattern2 = r'([A-Za-z][A-Za-z0-9\s]+?)\s*(?:base id|table id|database id|project id|workspace id|app id):\s*([^\s,;]+)'
+            # Also handle variations like BASE_ID, TABLE_ID with optional quotes around platform names
+            # Examples: 'Airtable "upwardOS" BASE_ID: appXYZ' or 'Airtable table id: tblXYZ'
+            pattern2 = r'([A-Za-z][A-Za-z0-9\s"]+?)\s*(?:base[_\s]?id|table[_\s]?id|database[_\s]?id|project[_\s]?id|workspace[_\s]?id|app[_\s]?id):\s*([^\s,;]+)'
             matches2 = re.finditer(pattern2, content, re.IGNORECASE)
 
             for match in matches2:
                 platform = match.group(1).strip()
                 param_value = match.group(2).strip()
 
+                # Remove quotes from platform name if present
+                platform = platform.replace('"', '').strip()
+
                 # Find the parameter type (base id, table id, etc.)
-                param_type_match = re.search(r'(?:base id|table id|database id|project id|workspace id|app id)', match.group(0), re.IGNORECASE)
+                param_type_match = re.search(r'(?:base[_\s]?id|table[_\s]?id|database[_\s]?id|project[_\s]?id|workspace[_\s]?id|app[_\s]?id)', match.group(0), re.IGNORECASE)
                 if param_type_match:
-                    param_type = param_type_match.group(0)
+                    param_type = param_type_match.group(0).replace('_', ' ').replace('  ', ' ').lower().strip()
                     # Store as "Platform base id" or "Platform table id"
                     key_name = f"{platform} {param_type}"
                     api_keys[key_name] = param_value
