@@ -106,14 +106,15 @@ router = AgentRouter(AGENTS)
 
 def _extract_api_keys_from_messages(messages: List[Dict[str, Any]]) -> Dict[str, str]:
     """
-    Extract API keys from system messages.
+    Extract API keys and other parameters from system messages.
 
     Expected format in system message content:
         "Open Measures key: abc123, Airtable personal access token: xyz789"
+        "Airtable base id: appABC123, Airtable table id: tblXYZ789"
 
     Returns:
-        Dict mapping platform names to their API keys
-        Example: {"Open Measures": "abc123", "Airtable": "xyz789"}
+        Dict mapping parameter names to their values
+        Example: {"Open Measures": "abc123", "Airtable": "xyz789", "Airtable base id": "appABC123"}
     """
     import re
 
@@ -123,12 +124,6 @@ def _extract_api_keys_from_messages(messages: List[Dict[str, Any]]) -> Dict[str,
     for msg in messages:
         if msg.get('role') == 'system':
             content = msg.get('content', '')
-
-            # Pattern: "Platform name key: value" or "Platform name token: value" or "Platform name: value"
-            # Supports formats like:
-            #   "Open Measures key: abc123"
-            #   "Airtable personal access token: xyz789"
-            #   "GitHub: ghp_abc123"
 
             # Pattern 1: "Name (key|token|api key|access token|personal access token): value"
             pattern1 = r'([A-Za-z][A-Za-z0-9\s]+?)\s*(?:key|token|api key|access token|personal access token):\s*([^\s,;]+)'
@@ -143,7 +138,24 @@ def _extract_api_keys_from_messages(messages: List[Dict[str, Any]]) -> Dict[str,
 
                 # Store the key
                 api_keys[platform] = key_value
-                logger.info(f"Extracted API key for '{platform}': {key_value[:10]}...")
+                logger.info(f"Extracted '{platform}': {key_value}")  # Show full value in logs
+
+            # Pattern 2: "Name (base id|table id|database id|project id|workspace id): value"
+            pattern2 = r'([A-Za-z][A-Za-z0-9\s]+?)\s*(?:base id|table id|database id|project id|workspace id|app id):\s*([^\s,;]+)'
+            matches2 = re.finditer(pattern2, content, re.IGNORECASE)
+
+            for match in matches2:
+                platform = match.group(1).strip()
+                param_value = match.group(2).strip()
+
+                # Find the parameter type (base id, table id, etc.)
+                param_type_match = re.search(r'(?:base id|table id|database id|project id|workspace id|app id)', match.group(0), re.IGNORECASE)
+                if param_type_match:
+                    param_type = param_type_match.group(0)
+                    # Store as "Platform base id" or "Platform table id"
+                    key_name = f"{platform} {param_type}"
+                    api_keys[key_name] = param_value
+                    logger.info(f"Extracted '{key_name}': {param_value}")  # Show full value in logs
 
     return api_keys
 
