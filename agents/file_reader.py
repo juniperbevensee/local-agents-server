@@ -78,8 +78,19 @@ class FileReaderAgent(BaseAgent):
         """Process file read or write operation."""
         message_lower = message.lower()
 
-        # Determine if this is a write or read operation
-        is_write = any(trigger in message_lower for trigger in ['save to', 'save as', 'write to', 'write file'])
+        # Determine if this is a write or read operation using regex patterns
+        # Check for write patterns: "save ... to", "write ... to", "save as", etc.
+        write_patterns = [
+            r'\bsave\s+.*\s+to\b',           # "save X to" or "save that result to"
+            r'\bwrite\s+.*\s+to\b',          # "write X to" or "write that to"
+            r'\bsave\s+as\b',                 # "save as"
+            r'\bwrite\s+as\b',                # "write as"
+            r'\bsave\s+to\b',                 # "save to"
+            r'\bwrite\s+to\b',                # "write to"
+            r'\bwrite\s+file\b',              # "write file"
+        ]
+
+        is_write = any(re.search(pattern, message_lower) for pattern in write_patterns)
 
         if is_write:
             return self._handle_write(message, full_context)
