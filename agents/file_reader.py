@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-File Reader Agent
+File Agent
 
-Reads local files (JSON, CSV, PDF, TXT) and summarizes them using LM Studio.
+Reads and writes local files (JSON, CSV, TXT, MD, LOG) with security restrictions.
+Can only access files within the project directory (artefacts folder recommended).
 """
 
 import re
@@ -11,7 +12,7 @@ import json
 import csv
 import os
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import sys
 
 # Add parent directory to path to import base_agent
@@ -23,55 +24,76 @@ logger = logging.getLogger(__name__)
 
 
 class FileReaderAgent(BaseAgent):
-    """Agent that reads and summarizes local files."""
+    """Agent that reads and writes local files."""
 
     SUPPORTED_EXTENSIONS = {'.json', '.csv', '.txt', '.pdf', '.md', '.log'}
+    WRITABLE_EXTENSIONS = {'.json', '.csv', '.txt', '.md', '.log'}  # PDF excluded from writing
 
     def __init__(self):
         """Initialize with the base directory for security."""
         # Get the base directory (where the Flask app is running)
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        logger.info(f"File Reader Agent: Base directory set to {self.base_dir}")
+        self.artefacts_dir = os.path.join(self.base_dir, 'artefacts')
+        logger.info(f"File Agent: Base directory set to {self.base_dir}")
+        logger.info(f"File Agent: Artefacts directory at {self.artefacts_dir}")
 
     def get_name(self) -> str:
-        return "file_reader"
+        return "file_agent"
 
     def get_description(self) -> str:
-        return "Reads and summarizes local files (JSON, CSV, PDF, TXT, MD, LOG)"
+        return "Reads and writes local files (JSON, CSV, TXT, MD, LOG) within the project directory"
 
     def get_trigger_patterns(self) -> list:
         return [
             r'file:',
             r'read file',
+            r'write file',
+            r'save to',
+            r'save as',
+            r'write to',
             r'summarize file',
             r'analyze file',
             r'\.(json|csv|txt|pdf|md|log)\b',
         ]
 
     def get_usage_example(self) -> str:
-        return "file:/path/to/document.pdf or Please summarize file:/Users/me/data.json"
+        return "file:artefacts/data.json or save to artefacts/results.json or write to artefacts/output.txt"
 
     def can_handle(self, message: str) -> bool:
-        """Check if message contains a file reference."""
-        # Check for file: protocol
-        if 'file:' in message.lower():
+        """Check if message contains a file operation."""
+        message_lower = message.lower()
+
+        # Check for file operations
+        if any(trigger in message_lower for trigger in ['file:', 'read file', 'write file', 'save to', 'save as', 'write to']):
             return True
 
         # Check for file extensions
         for ext in self.SUPPORTED_EXTENSIONS:
-            if ext in message.lower():
+            if ext in message_lower:
                 return True
 
         return False
 
     def process(self, message: str, full_context: Dict[str, Any]) -> str:
-        """Read file and return summary."""
+        """Process file read or write operation."""
+        message_lower = message.lower()
+
+        # Determine if this is a write or read operation
+        is_write = any(trigger in message_lower for trigger in ['save to', 'save as', 'write to', 'write file'])
+
+        if is_write:
+            return self._handle_write(message, full_context)
+        else:
+            return self._handle_read(message, full_context)
+
+    def _handle_read(self, message: str, full_context: Dict[str, Any]) -> str:
+        """Handle file read operation."""
         # Extract file path
         file_path = self._extract_file_path(message)
         if not file_path:
-            return f"I couldn't find a valid file path. Supported formats: {', '.join(self.SUPPORTED_EXTENSIONS)}\nExample: file:/path/to/file.json"
+            return f"I couldn't find a valid file path. Supported formats: {', '.join(self.SUPPORTED_EXTENSIONS)}\nExample: file:artefacts/data.json"
 
-        logger.info(f"File Reader Agent: Processing file: {file_path}")
+        logger.info(f"File Agent: Reading file: {file_path}")
 
         # Security check: Validate path is within allowed directory
         security_error = self._validate_file_path(file_path)
@@ -99,7 +121,59 @@ class FileReaderAgent(BaseAgent):
         # Summarize
         summary = self._summarize_with_lm_studio(content, file_path)
 
+        # Store the raw content in context for potential chaining
+        if '_file_content' not in full_context:
+            full_context['_file_content'] = {}
+        full_context['_file_content']['last_read'] = content
+        full_context['_file_content']['last_read_path'] = file_path
+
         return f"Summary of {os.path.basename(file_path)}:\n\n{summary}"
+
+    def _handle_write(self, message: str, full_context: Dict[str, Any]) -> str:
+        """Handle file write operation."""
+        # Extract file path and content
+        file_path = self._extract_write_path(message)
+        if not file_path:
+            return "I couldn't find a valid file path to write to. Example: save to artefacts/output.json"
+
+        # Make path relative to artefacts if not already absolute
+        if not os.path.isabs(file_path) and not file_path.startswith('artefacts'):
+            file_path = os.path.join('artefacts', file_path)
+
+        # Convert to absolute path
+        if not os.path.isabs(file_path):
+            file_path = os.path.join(self.base_dir, file_path)
+
+        logger.info(f"File Agent: Writing to file: {file_path}")
+
+        # Security check: Validate path is within allowed directory
+        security_error = self._validate_file_path(file_path)
+        if security_error:
+            return security_error
+
+        # Get file extension
+        _, ext = os.path.splitext(file_path)
+        ext = ext.lower()
+
+        if ext not in self.WRITABLE_EXTENSIONS:
+            return f"Error: Cannot write file type '{ext}'. Writable types: {', '.join(self.WRITABLE_EXTENSIONS)}"
+
+        # Get content to write
+        content = self._extract_write_content(message, full_context)
+        if content is None:
+            return "Error: Could not determine what content to write. Please provide content or reference previous results."
+
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        # Write file
+        try:
+            self._write_file(file_path, ext, content)
+            logger.info(f"Successfully wrote to {file_path}")
+            return f"✓ Successfully wrote to {os.path.relpath(file_path, self.base_dir)}\n\nPath: {file_path}"
+        except Exception as e:
+            logger.error(f"Error writing file: {e}")
+            return f"Error writing file: {str(e)}"
 
     def _extract_file_path(self, text: str) -> str:
         """Extract file path from message."""
@@ -165,6 +239,80 @@ class FileReaderAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Error validating file path: {e}")
             return f"Error validating file path: {str(e)}"
+
+    def _extract_write_path(self, text: str) -> Optional[str]:
+        """Extract destination file path from write operation."""
+        # Patterns: "save to X", "write to X", "save as X"
+        patterns = [
+            r'(?:save|write)\s+(?:to|as)\s+([^\s]+\.(?:json|csv|txt|md|log))',
+            r'(?:save|write)\s+(?:to|as)\s+["\']([^"\']+\.(?:json|csv|txt|md|log))["\']',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(1).strip('"\'')
+
+        return None
+
+    def _extract_write_content(self, message: str, full_context: Dict[str, Any]) -> Optional[Any]:
+        """
+        Extract content to write from message or context.
+        Checks for: explicit content in message, previous API results, previous file reads.
+        """
+        # Check if there's previous API call result in context
+        if '_last_api_result' in full_context:
+            logger.info("Using previous API result as content to write")
+            return full_context['_last_api_result']
+
+        # Check if there's explicit content after the save command
+        # Pattern: "save to file.json: {content}"
+        content_match = re.search(r'(?:save|write)\s+(?:to|as)\s+[^\s:]+:\s*(.+)', message, re.DOTALL | re.IGNORECASE)
+        if content_match:
+            content_str = content_match.group(1).strip()
+            # Try to parse as JSON if it looks like JSON
+            if content_str.startswith('{') or content_str.startswith('['):
+                try:
+                    return json.loads(content_str)
+                except:
+                    return content_str
+            return content_str
+
+        # No content found
+        return None
+
+    def _write_file(self, file_path: str, ext: str, content: Any) -> None:
+        """Write content to file based on extension."""
+        if ext == '.json':
+            with open(file_path, 'w', encoding='utf-8') as f:
+                if isinstance(content, str):
+                    # Try to parse string as JSON first
+                    try:
+                        content = json.loads(content)
+                    except:
+                        pass
+                json.dump(content, f, indent=2, ensure_ascii=False)
+                logger.info(f"Wrote JSON to {file_path}")
+
+        elif ext == '.csv':
+            with open(file_path, 'w', encoding='utf-8', newline='') as f:
+                if isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
+                    # List of dicts - write as CSV
+                    writer = csv.DictWriter(f, fieldnames=content[0].keys())
+                    writer.writeheader()
+                    writer.writerows(content)
+                else:
+                    # Just write as text
+                    f.write(str(content))
+                logger.info(f"Wrote CSV to {file_path}")
+
+        else:  # .txt, .md, .log
+            with open(file_path, 'w', encoding='utf-8') as f:
+                if isinstance(content, (dict, list)):
+                    f.write(json.dumps(content, indent=2))
+                else:
+                    f.write(str(content))
+                logger.info(f"Wrote text to {file_path}")
 
     def _read_file(self, file_path: str, ext: str) -> str:
         """Read file content based on extension."""
