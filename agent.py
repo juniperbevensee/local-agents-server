@@ -7,6 +7,7 @@ Agents can fetch URLs, read files, and more - all summarized via LM Studio.
 """
 
 import logging
+import re
 from flask import Flask, request, jsonify
 from typing import List, Dict, Any
 from config import (
@@ -55,7 +56,7 @@ class AgentRouter:
 
     def route(self, message: str, full_context: Dict[str, Any]) -> str:
         """
-        Route message to appropriate agent.
+        Route message to appropriate agent. Supports command chaining.
 
         Args:
             message: The user's message
@@ -66,7 +67,14 @@ class AgentRouter:
         """
         logger.info(f"Routing message: {message[:100]}...")
 
-        # Try each agent in order
+        # Check for chained commands (e.g., "api_call: ... then save to artefacts/result.json")
+        chain = self._parse_command_chain(message)
+
+        if len(chain) > 1:
+            logger.info(f"Detected {len(chain)} chained commands")
+            return self._execute_chain(chain, full_context)
+
+        # Single command - route normally
         for agent in self.agents:
             if agent.can_handle(message):
                 logger.info(f"Routing to agent: {agent.get_name()}")
@@ -78,6 +86,63 @@ class AgentRouter:
 
         # No agent could handle it
         return self._get_no_handler_message()
+
+    def _parse_command_chain(self, message: str) -> list:
+        """
+        Parse message for chained commands.
+        Supports patterns like: "command1 then command2" or "command1 and save to file"
+        """
+        # Split on chain indicators
+        chain_patterns = [
+            r'\s+then\s+',
+            r'\s+and\s+(?:save|write)\s+',
+        ]
+
+        for pattern in chain_patterns:
+            parts = re.split(pattern, message, flags=re.IGNORECASE)
+            if len(parts) > 1:
+                # Reconstruct the save/write part if it was split
+                if 'save' in message.lower() or 'write' in message.lower():
+                    for i in range(1, len(parts)):
+                        if not parts[i].startswith(('save', 'write', 'Save', 'Write')):
+                            parts[i] = 'save ' + parts[i]
+                return [p.strip() for p in parts if p.strip()]
+
+        return [message]  # No chaining detected
+
+    def _execute_chain(self, chain: list, full_context: Dict[str, Any]) -> str:
+        """Execute a chain of commands in sequence."""
+        results = []
+
+        for i, command in enumerate(chain):
+            logger.info(f"Executing chain step {i+1}/{len(chain)}: {command[:50]}...")
+
+            # Find agent for this command
+            agent = None
+            for a in self.agents:
+                if a.can_handle(command):
+                    agent = a
+                    break
+
+            if not agent:
+                error = f"Step {i+1}: No agent found for command: {command[:50]}..."
+                results.append(error)
+                logger.error(error)
+                break
+
+            # Execute command
+            try:
+                result = agent.process(command, full_context)
+                results.append(f"**Step {i+1}/{len(chain)} ({agent.get_name()}):**\n{result}")
+                logger.info(f"Step {i+1} completed successfully")
+            except Exception as e:
+                error = f"**Step {i+1} Error:** {str(e)}"
+                results.append(error)
+                logger.error(f"Error in chain step {i+1}: {e}", exc_info=True)
+                break
+
+        # Combine results
+        return "\n\n" + "="*60 + "\n\n".join(results)
 
     def _get_no_handler_message(self) -> str:
         """Return helpful message when no agent can handle the request."""

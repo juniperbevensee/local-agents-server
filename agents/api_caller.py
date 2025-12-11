@@ -172,6 +172,11 @@ class APICallerAgent(BaseAgent):
                     # Don't retry on server errors (5xx) or if out of retries
                     break
 
+        # Store result in context for potential chaining
+        if result.get('success'):
+            full_context['_last_api_result'] = result.get('data')
+            logger.info("Stored API result in context for potential chaining")
+
         # Step 4: Format and return response
         return self._format_response(api_call_info, result, retry_count=attempt)
 
