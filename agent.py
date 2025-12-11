@@ -90,12 +90,34 @@ class AgentRouter:
     def _parse_command_chain(self, message: str) -> list:
         """
         Parse message for chained commands.
-        Supports patterns like: "command1 then command2" or "command1 and save to file"
+        Supports patterns like:
+        - "command1 then command2"
+        - "command1 and save to file"
+        - Numbered lists: "1. command1\n2. command2"
+        - Natural: "do X, save that result to Y"
         """
+        # Check for numbered list format first (1., 2., etc.)
+        numbered_pattern = r'^\s*\d+\.\s+'
+        lines = message.split('\n')
+
+        # Filter lines that start with numbers
+        numbered_commands = []
+        for line in lines:
+            if re.match(numbered_pattern, line.strip()):
+                # Remove the number prefix
+                cmd = re.sub(numbered_pattern, '', line.strip())
+                if cmd:
+                    numbered_commands.append(cmd)
+
+        if len(numbered_commands) > 1:
+            logger.info(f"Detected numbered list with {len(numbered_commands)} commands")
+            return numbered_commands
+
         # Split on chain indicators
         chain_patterns = [
             r'\s+then\s+',
             r'\s+and\s+(?:save|write)\s+',
+            r',\s*(?:and\s+)?(?:save|write)\s+(?:that result|the result|it|results?)\s+',
         ]
 
         for pattern in chain_patterns:
@@ -105,7 +127,9 @@ class AgentRouter:
                 if 'save' in message.lower() or 'write' in message.lower():
                     for i in range(1, len(parts)):
                         if not parts[i].startswith(('save', 'write', 'Save', 'Write')):
-                            parts[i] = 'save ' + parts[i]
+                            # Check if this looks like a save command that got split
+                            if 'to' in parts[i] or '.json' in parts[i] or '.txt' in parts[i] or '.csv' in parts[i]:
+                                parts[i] = 'save ' + parts[i]
                 return [p.strip() for p in parts if p.strip()]
 
         return [message]  # No chaining detected

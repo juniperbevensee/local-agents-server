@@ -242,9 +242,13 @@ class FileReaderAgent(BaseAgent):
 
     def _extract_write_path(self, text: str) -> Optional[str]:
         """Extract destination file path from write operation."""
-        # Patterns: "save to X", "write to X", "save as X"
+        # Patterns: "save to X", "write to X", "save as X", "save that result to X"
         patterns = [
+            # Natural language: "save that result to X" or "save the result to X"
+            r'(?:save|write)\s+(?:that|the)?\s*(?:result|results|data|output|response)?\s*(?:to|as)\s+([^\s]+\.(?:json|csv|txt|md|log))',
+            # Simple: "save to X" or "write to X"
             r'(?:save|write)\s+(?:to|as)\s+([^\s]+\.(?:json|csv|txt|md|log))',
+            # With quotes: "save to 'file.json'"
             r'(?:save|write)\s+(?:to|as)\s+["\']([^"\']+\.(?:json|csv|txt|md|log))["\']',
         ]
 
