@@ -27,6 +27,12 @@ class FileReaderAgent(BaseAgent):
 
     SUPPORTED_EXTENSIONS = {'.json', '.csv', '.txt', '.pdf', '.md', '.log'}
 
+    def __init__(self):
+        """Initialize with the base directory for security."""
+        # Get the base directory (where the Flask app is running)
+        self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        logger.info(f"File Reader Agent: Base directory set to {self.base_dir}")
+
     def get_name(self) -> str:
         return "file_reader"
 
@@ -66,6 +72,11 @@ class FileReaderAgent(BaseAgent):
             return f"I couldn't find a valid file path. Supported formats: {', '.join(self.SUPPORTED_EXTENSIONS)}\nExample: file:/path/to/file.json"
 
         logger.info(f"File Reader Agent: Processing file: {file_path}")
+
+        # Security check: Validate path is within allowed directory
+        security_error = self._validate_file_path(file_path)
+        if security_error:
+            return security_error
 
         # Check if file exists
         if not os.path.exists(file_path):
@@ -119,6 +130,41 @@ class FileReaderAgent(BaseAgent):
                 return os.path.expanduser(path)
 
         return None
+
+    def _validate_file_path(self, file_path: str) -> str:
+        """
+        Validate that the file path is within the allowed directory.
+        Returns error message if invalid, None if valid.
+        """
+        try:
+            # Resolve the absolute path (handles relative paths, symlinks, .., etc.)
+            absolute_path = os.path.realpath(os.path.expanduser(file_path))
+
+            # Get the real base directory
+            real_base_dir = os.path.realpath(self.base_dir)
+
+            # Check if the file path is within the base directory
+            # os.path.commonpath returns the common path prefix
+            try:
+                common = os.path.commonpath([absolute_path, real_base_dir])
+            except ValueError:
+                # Paths are on different drives (Windows)
+                return f"Security Error: Cannot access files outside the project directory.\nAllowed directory: {real_base_dir}"
+
+            # If the common path is not the base directory, the file is outside
+            if common != real_base_dir:
+                logger.warning(f"Security: Blocked access to file outside base directory: {file_path}")
+                return (f"Security Error: Cannot access files outside the project directory.\n"
+                       f"Requested: {absolute_path}\n"
+                       f"Allowed directory: {real_base_dir}\n"
+                       f"Tip: Place files in the 'artefacts' folder within the project.")
+
+            logger.info(f"Security: Path validated - {absolute_path}")
+            return None  # Valid path
+
+        except Exception as e:
+            logger.error(f"Error validating file path: {e}")
+            return f"Error validating file path: {str(e)}"
 
     def _read_file(self, file_path: str, ext: str) -> str:
         """Read file content based on extension."""
