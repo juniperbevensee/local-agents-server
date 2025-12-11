@@ -64,6 +64,16 @@ class MarkdownFormatterAgent(BaseAgent):
         if 'convert to markdown' in message_lower:
             return True
 
+        # Check for natural language formatting requests
+        if 'format' in message_lower and 'markdown' in message_lower:
+            return True
+
+        if 'beautify' in message_lower and 'markdown' in message_lower:
+            return True
+
+        if 'clean up' in message_lower and ('markdown' in message_lower or 'md' in message_lower):
+            return True
+
         return False
 
     def process(self, message: str, full_context: Dict[str, Any]) -> str:
