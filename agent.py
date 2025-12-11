@@ -19,6 +19,7 @@ from config import (
 from agents.url_fetcher import URLFetcherAgent
 from agents.file_reader import FileReaderAgent
 from agents.api_caller import APICallerAgent
+from agents.markdown_formatter import MarkdownFormatterAgent
 
 # Configure logging with more detail
 logging.basicConfig(
@@ -33,11 +34,13 @@ app = Flask(__name__)
 # IMPORTANT: Order matters! Most specific agents first, general ones last.
 # APICallerAgent checks for "api_call:" or "docs=" (specific)
 # FileReaderAgent checks for "file:" or file extensions (specific)
+# MarkdownFormatterAgent checks for "format_markdown:" or "markdown:" (specific)
 # URLFetcherAgent checks for any URL (general - catches everything)
 AGENTS = [
-    APICallerAgent(),      # Most specific - api_call: or docs=
-    FileReaderAgent(),     # Specific - file: or extensions
-    URLFetcherAgent(),     # General - any URL
+    APICallerAgent(),             # Most specific - api_call: or docs=
+    FileReaderAgent(),            # Specific - file: or extensions
+    MarkdownFormatterAgent(),     # Specific - format_markdown: or markdown:
+    URLFetcherAgent(),            # General - any URL
 ]
 
 
