@@ -142,10 +142,18 @@ class FileReaderAgent(BaseAgent):
 
     def _handle_write(self, message: str, full_context: Dict[str, Any]) -> str:
         """Handle file write operation."""
+        # Get content to write first (needed for auto-filename generation)
+        content = self._extract_write_content(message, full_context)
+        if content is None:
+            return "Error: Could not determine what content to write. Please provide content or reference previous results."
+
         # Extract file path and content
         file_path = self._extract_write_path(message)
+
+        # If no file path specified, generate one based on content type
         if not file_path:
-            return "I couldn't find a valid file path to write to. Example: save to artefacts/output.json"
+            file_path = self._generate_filename(content, message)
+            logger.info(f"Auto-generated filename: {file_path}")
 
         # Make path relative to artefacts if not already absolute
         if not os.path.isabs(file_path) and not file_path.startswith('artefacts'):
@@ -169,10 +177,11 @@ class FileReaderAgent(BaseAgent):
         if ext not in self.WRITABLE_EXTENSIONS:
             return f"Error: Cannot write file type '{ext}'. Writable types: {', '.join(self.WRITABLE_EXTENSIONS)}"
 
-        # Get content to write
-        content = self._extract_write_content(message, full_context)
-        if content is None:
-            return "Error: Could not determine what content to write. Please provide content or reference previous results."
+        # Check if file exists and handle naming conflicts
+        # Only overwrite if explicitly requested
+        if os.path.exists(file_path) and not self._should_overwrite(message):
+            file_path = self._get_unique_filename(file_path)
+            logger.info(f"File exists, renamed to: {file_path}")
 
         # Ensure directory exists
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -255,18 +264,20 @@ class FileReaderAgent(BaseAgent):
         """Extract destination file path from write operation."""
         # Patterns: "save to X", "write to X", "save as X", "save that result to X"
         patterns = [
-            # Natural language: "save that result to X" or "save the result to X"
-            r'(?:save|write)\s+(?:that|the)?\s*(?:result|results|data|output|response)?\s*(?:to|as)\s+([^\s]+\.(?:json|csv|txt|md|log))',
-            # Simple: "save to X" or "write to X"
-            r'(?:save|write)\s+(?:to|as)\s+([^\s]+\.(?:json|csv|txt|md|log))',
             # With quotes: "save to 'file.json'"
-            r'(?:save|write)\s+(?:to|as)\s+["\']([^"\']+\.(?:json|csv|txt|md|log))["\']',
+            r'(?:save|write)\s+.*?(?:to|as)\s+["\']([^"\']+\.(?:json|csv|txt|md|log))["\']',
+            # Natural language: "save [anything] to X" or "write [anything] to X"
+            # This handles: "save this message to", "save message to", "save that result to", etc.
+            r'(?:save|write)\s+.*?(?:to|as)\s+([^\s:]+\.(?:json|csv|txt|md|log))',
         ]
 
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                return match.group(1).strip('"\'')
+                path = match.group(1).strip('"\'')
+                # Remove trailing punctuation like colons
+                path = path.rstrip(':,;')
+                return path
 
         return None
 
@@ -280,18 +291,23 @@ class FileReaderAgent(BaseAgent):
             logger.info("Using previous API result as content to write")
             return full_context['_last_api_result']
 
-        # Check if there's explicit content after the save command
-        # Pattern: "save to file.json: {content}"
-        content_match = re.search(r'(?:save|write)\s+(?:to|as)\s+[^\s:]+:\s*(.+)', message, re.DOTALL | re.IGNORECASE)
-        if content_match:
-            content_str = content_match.group(1).strip()
-            # Try to parse as JSON if it looks like JSON
-            if content_str.startswith('{') or content_str.startswith('['):
-                try:
-                    return json.loads(content_str)
-                except:
-                    return content_str
-            return content_str
+        # Try to extract content from the message itself
+        # Look for content after the filename - "save this message to file.txt\n\nCONTENT"
+        # or "save to file.json: {content}"
+        # Extract everything after the file path
+        file_path_match = re.search(r'(?:save|write)\s+.*?(?:to|as)\s+([^\s:]+\.(?:json|csv|txt|md|log))\s*:?\s*(.+)',
+                                     message, re.DOTALL | re.IGNORECASE)
+        if file_path_match and file_path_match.group(2):
+            content_str = file_path_match.group(2).strip()
+            if content_str:
+                logger.info("Found content after filename")
+                # Try to parse as JSON if it looks like JSON
+                if content_str.startswith('{') or content_str.startswith('['):
+                    try:
+                        return json.loads(content_str)
+                    except:
+                        return content_str
+                return content_str
 
         # No content found
         return None
@@ -328,6 +344,65 @@ class FileReaderAgent(BaseAgent):
                 else:
                     f.write(str(content))
                 logger.info(f"Wrote text to {file_path}")
+
+    def _generate_filename(self, content: Any, message: str) -> str:
+        """
+        Generate a filename based on content type and message context.
+        Returns a filename with appropriate extension.
+        """
+        from datetime import datetime
+
+        # Determine file extension based on content type
+        if isinstance(content, dict) or isinstance(content, list):
+            ext = '.json'
+        elif 'csv' in message.lower():
+            ext = '.csv'
+        elif 'markdown' in message.lower() or 'md' in message.lower():
+            ext = '.md'
+        elif 'log' in message.lower():
+            ext = '.log'
+        else:
+            ext = '.txt'
+
+        # Generate timestamp-based filename
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"output_{timestamp}{ext}"
+
+        logger.info(f"Generated filename: {filename}")
+        return filename
+
+    def _should_overwrite(self, message: str) -> bool:
+        """Check if message explicitly requests to overwrite existing file."""
+        message_lower = message.lower()
+        overwrite_keywords = [
+            'overwrite',
+            'replace',
+            'write over',
+            'rewrite',
+            'update the file',
+            'update file'
+        ]
+        return any(keyword in message_lower for keyword in overwrite_keywords)
+
+    def _get_unique_filename(self, file_path: str) -> str:
+        """
+        Generate a unique filename by adding _1, _2, etc. if file exists.
+        Example: file.txt -> file_1.txt -> file_2.txt
+        """
+        if not os.path.exists(file_path):
+            return file_path
+
+        directory = os.path.dirname(file_path)
+        filename = os.path.basename(file_path)
+        name, ext = os.path.splitext(filename)
+
+        counter = 1
+        while True:
+            new_filename = f"{name}_{counter}{ext}"
+            new_path = os.path.join(directory, new_filename)
+            if not os.path.exists(new_path):
+                return new_path
+            counter += 1
 
     def _read_file(self, file_path: str, ext: str) -> str:
         """Read file content based on extension."""
