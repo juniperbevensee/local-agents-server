@@ -22,13 +22,12 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_agent import BaseAgent
 from config import (
-    LM_STUDIO_URL,
-    LM_STUDIO_MODEL,
     MAX_CONTENT_LENGTH,
     REQUEST_TIMEOUT,
     SUMMARY_MAX_TOKENS,
     SUMMARY_TEMPERATURE
 )
+from llm_client import chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -846,28 +845,24 @@ Important:
 - READ THE DOCUMENTATION CAREFULLY to get parameter names exactly right
 """
 
-            payload = {
-                "model": LM_STUDIO_MODEL,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are an API expert that reads documentation and forms valid API requests. Always respond with valid JSON only."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "temperature": 0.3,  # Lower temperature for more precise API call formation
-                "max_tokens": 1000
-            }
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are an API expert that reads documentation and forms valid API requests. Always respond with valid JSON only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
 
             logger.info("Calling LLM to form API request...")
-            response = requests.post(LM_STUDIO_URL, json=payload, timeout=120)
-            response.raise_for_status()
-
-            result = response.json()
-            llm_response = result['choices'][0]['message']['content']
+            llm_response = chat_completion(
+                messages=messages,
+                temperature=0.3,  # Lower temperature for more precise API call formation
+                max_tokens=1000,
+                timeout=120
+            )
 
             logger.info(f"LLM Response: {llm_response[:200]}...")
 

@@ -19,11 +19,8 @@ import os
 # Add parent directory to path to import base_agent
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_agent import BaseAgent
-from config import (
-    LM_STUDIO_URL,
-    LM_STUDIO_MODEL,
-    REQUEST_TIMEOUT,
-)
+from config import REQUEST_TIMEOUT
+from llm_client import chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -135,28 +132,24 @@ Instructions:
 
 Formatted Markdown:"""
 
-            payload = {
-                "model": LM_STUDIO_MODEL,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a markdown formatting expert. Always respond with properly formatted Markdown syntax only."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "temperature": 0.3,  # Lower for consistent formatting
-                "max_tokens": 2000
-            }
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are a markdown formatting expert. Always respond with properly formatted Markdown syntax only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
 
             logger.info("Calling LLM to format markdown...")
-            response = requests.post(LM_STUDIO_URL, json=payload, timeout=120)
-            response.raise_for_status()
-
-            result = response.json()
-            markdown_output = result['choices'][0]['message']['content']
+            markdown_output = chat_completion(
+                messages=messages,
+                temperature=0.3,  # Lower for consistent formatting
+                max_tokens=2000,
+                timeout=120
+            )
 
             logger.info(f"Successfully formatted to markdown: {len(markdown_output)} characters")
 
