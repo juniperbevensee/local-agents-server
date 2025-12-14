@@ -45,3 +45,8 @@ Thumbs.db
 .env
 *.env
 !.env.example
+
+# Artefacts - user-generated files from agents
+artefacts/*
+!artefacts/.gitkeep
+!artefacts/README.md

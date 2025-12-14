@@ -1,8 +1,0 @@
-{
-  "message": "This is a test file in the artefacts directory",
-  "purpose": "Testing file reader security",
-  "data": {
-    "items": ["apple", "banana", "cherry"],
-    "count": 3
-  }
-}

@@ -1,0 +1,2 @@
+# This file ensures the artefacts directory is tracked by git
+# All other files in this directory are gitignored
