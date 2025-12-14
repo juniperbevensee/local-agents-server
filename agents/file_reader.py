@@ -18,7 +18,8 @@ import sys
 # Add parent directory to path to import base_agent
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_agent import BaseAgent
-from config import LM_STUDIO_URL, LM_STUDIO_MODEL, SUMMARY_MAX_TOKENS, SUMMARY_TEMPERATURE
+from config import SUMMARY_MAX_TOKENS, SUMMARY_TEMPERATURE
+from llm_client import chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -497,34 +498,30 @@ class FileReaderAgent(BaseAgent):
             return f"Error reading PDF: {str(e)}"
 
     def _summarize_with_lm_studio(self, content: str, file_path: str) -> str:
-        """Send content to LM Studio for summarization."""
+        """Send content to LLM for summarization."""
         try:
             filename = os.path.basename(file_path)
             prompt = f"Please provide a concise summary of the following file ({filename}):\n\n{content}"
 
-            payload = {
-                "model": LM_STUDIO_MODEL,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant that creates concise, informative summaries of documents and data files."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "temperature": SUMMARY_TEMPERATURE,
-                "max_tokens": SUMMARY_MAX_TOKENS
-            }
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that creates concise, informative summaries of documents and data files."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
 
-            logger.info("Sending to LM Studio for summarization...")
-            response = requests.post(LM_STUDIO_URL, json=payload, timeout=60)
-            response.raise_for_status()
-
-            result = response.json()
-            summary = result['choices'][0]['message']['content']
+            logger.info("Sending to LLM for summarization...")
+            summary = chat_completion(
+                messages=messages,
+                temperature=SUMMARY_TEMPERATURE,
+                max_tokens=SUMMARY_MAX_TOKENS,
+                timeout=60
+            )
             return summary
         except Exception as e:
-            logger.error(f"Error calling LM Studio: {e}")
+            logger.error(f"Error calling LLM: {e}")
             return f"Error generating summary: {str(e)}"
