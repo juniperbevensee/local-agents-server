@@ -28,6 +28,7 @@ from config import (
     SUMMARY_TEMPERATURE
 )
 from llm_client import chat_completion
+from credential_manager import get_credential, mask_secret
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +72,20 @@ class APICallerAgent(BaseAgent):
         # Extract components from message
         docs_url, api_base_url, api_key, request_text = self._extract_request_components(message)
 
+        # If no key was provided in the message, try credential manager first
+        if not api_key and docs_url:
+            platform_name = self._guess_platform_name(docs_url)
+            logger.info(f"Searching credential manager for '{platform_name}' API key...")
+            api_key = get_credential(platform_name)
+            if api_key:
+                logger.info(f"✓ Found API key in credential manager for: {platform_name} ({mask_secret(api_key)})")
+            else:
+                logger.info(f"No API key found in credential manager for: {platform_name}")
+
         # Extract API keys from system messages if available
         system_api_keys = full_context.get('_extracted_api_keys', {})
 
-        # If no key was provided in the message, try to find one from system messages
+        # If still no key, try to find one from system messages
         if not api_key and system_api_keys:
             api_key, key_platform = self._match_api_key(docs_url, system_api_keys)
             if api_key:
