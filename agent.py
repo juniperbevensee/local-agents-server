@@ -22,14 +22,6 @@ from agents.file_reader import FileReaderAgent
 from agents.api_caller import APICallerAgent
 from agents.markdown_formatter import MarkdownFormatterAgent
 
-# Try to import AirtableAgent (optional - may fail on Python 3.14+)
-try:
-    from agents.airtable_agent import AirtableAgent
-    AIRTABLE_AVAILABLE = True
-except Exception as e:
-    AIRTABLE_AVAILABLE = False
-    airtable_error = str(e)
-
 # Configure logging with more detail
 logging.basicConfig(
     level=logging.INFO,
@@ -37,35 +29,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-if not AIRTABLE_AVAILABLE:
-    logger.warning(f"AirtableAgent not available: {airtable_error}")
-    logger.warning("This is likely due to Python 3.14 compatibility issues with pyairtable")
-    logger.warning("To use AirtableAgent, try Python 3.12 or 3.13, or use APICallerAgent as fallback")
-
 app = Flask(__name__)
 
 # Register all available agents here
 # IMPORTANT: Order matters! Most specific agents first, general ones last.
-# AirtableAgent checks for "airtable:" or Airtable IDs (most specific, if available)
 # APICallerAgent checks for "api_call:" or "docs=" (specific)
 # MarkdownFormatterAgent checks for "format_markdown:" or "markdown:" (specific)
 # FileReaderAgent checks for "file:" or file extensions (specific)
 # URLFetcherAgent checks for any URL (general - catches everything)
-
-# Build agent list dynamically based on availability
-AGENTS = []
-
-# Add AirtableAgent if available (may not work on Python 3.14+)
-if AIRTABLE_AVAILABLE:
-    AGENTS.append(AirtableAgent())
-
-# Add core agents (always available)
-AGENTS.extend([
+AGENTS = [
     APICallerAgent(),             # Specific - api_call: or docs=
     MarkdownFormatterAgent(),     # Specific - format_markdown: or markdown:
     FileReaderAgent(),            # Specific - file: or extensions
     URLFetcherAgent(),            # General - any URL
-])
+]
 
 
 class AgentRouter:
