@@ -6,7 +6,6 @@ This directory is for storing files that can be read and written by agents.
 - **File Reader Agent**: Read files from this directory
 - **File Writer Agent**: Write files to this directory (JSON, CSV, TXT, MD, LOG)
 - **API Caller Agent**: Save API responses here
-- **Airtable Agent**: Export records to files here
 
 ## Security
 Only files within this directory and the project root can be accessed for security.

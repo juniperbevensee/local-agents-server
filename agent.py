@@ -21,7 +21,6 @@ from agents.url_fetcher import URLFetcherAgent
 from agents.file_reader import FileReaderAgent
 from agents.api_caller import APICallerAgent
 from agents.markdown_formatter import MarkdownFormatterAgent
-from agents.airtable_agent import AirtableAgent
 
 # Configure logging with more detail
 logging.basicConfig(
@@ -34,13 +33,11 @@ app = Flask(__name__)
 
 # Register all available agents here
 # IMPORTANT: Order matters! Most specific agents first, general ones last.
-# AirtableAgent checks for "airtable:" or Airtable IDs (most specific)
 # APICallerAgent checks for "api_call:" or "docs=" (specific)
 # MarkdownFormatterAgent checks for "format_markdown:" or "markdown:" (specific)
 # FileReaderAgent checks for "file:" or file extensions (specific)
 # URLFetcherAgent checks for any URL (general - catches everything)
 AGENTS = [
-    AirtableAgent(),              # Most specific - airtable: or app*/tbl* IDs
     APICallerAgent(),             # Specific - api_call: or docs=
     MarkdownFormatterAgent(),     # Specific - format_markdown: or markdown:
     FileReaderAgent(),            # Specific - file: or extensions
