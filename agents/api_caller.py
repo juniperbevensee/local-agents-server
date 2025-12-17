@@ -277,14 +277,26 @@ class APICallerAgent(BaseAgent):
         # Parse the domain from URL
         domain = urlparse(docs_url).netloc
 
-        # Remove common prefixes and TLD
+        # Remove common prefixes
         domain = domain.replace('www.', '').replace('api.', '').replace('docs.', '')
+        domain = domain.replace('pro.', '').replace('dev.', '').replace('staging.', '')
 
-        # Extract the main name (before first dot)
-        name = domain.split('.')[0]
+        # Split by dots and find the meaningful name
+        # For "openmeasures.io" or "github.com" -> get first part
+        # For "api.stripe.com" -> already handled by prefix removal
+        parts = domain.split('.')
 
-        # Capitalize first letter
-        return name.capitalize()
+        # Skip single-letter or very short parts, common TLDs, and "api"/"pro"/"dev" subdomains
+        skip_parts = {'io', 'com', 'org', 'net', 'co', 'uk', 'dev', 'app', 'api', 'pro', 'staging'}
+
+        for part in parts:
+            if part not in skip_parts and len(part) > 2:
+                return part
+
+        # Fallback to first part if nothing found
+        name = parts[0] if parts else 'api'
+
+        return name
 
     def _mask_secrets(self, text: str) -> str:
         """
@@ -897,22 +909,33 @@ Important:
                 if 'headers' not in api_call_info:
                     api_call_info['headers'] = {}
 
-                # Add API key to Authorization header
+                # Check if Authorization header has placeholder
+                auth_header = api_call_info['headers'].get('Authorization', '')
+                has_placeholder = 'YOUR_API_KEY' in auth_header or not auth_header
+
+                # Add or replace API key in Authorization header
                 # Support common auth header formats
-                if 'Authorization' not in api_call_info['headers']:
+                if has_placeholder:
                     # Check if docs mention Bearer token
-                    if 'bearer' in docs_content.lower():
+                    if 'bearer' in docs_content.lower() or 'Bearer' in auth_header:
                         api_call_info['headers']['Authorization'] = f'Bearer {api_key}'
+                        logger.info("Added API key to Bearer Authorization header")
                     # Check if docs mention API key header
                     elif 'x-api-key' in docs_content.lower():
                         api_call_info['headers']['X-API-Key'] = api_key
+                        logger.info("Added API key to X-API-Key header")
                     elif 'apikey' in docs_content.lower():
                         api_call_info['headers']['ApiKey'] = api_key
+                        logger.info("Added API key to ApiKey header")
                     else:
-                        # Default to ApiKey header
-                        api_call_info['headers']['ApiKey'] = api_key
-
-                    logger.info(f"Added API key to headers")
+                        # Default to Bearer if Authorization header exists with placeholder
+                        if 'Authorization' in api_call_info['headers']:
+                            api_call_info['headers']['Authorization'] = f'Bearer {api_key}'
+                            logger.info("Replaced placeholder with Bearer API key")
+                        else:
+                            # Default to ApiKey header
+                            api_call_info['headers']['ApiKey'] = api_key
+                            logger.info("Added API key to ApiKey header")
 
             logger.info("Successfully formed API call:")
             logger.info(f"  Method: {api_call_info.get('method')}")
