@@ -55,7 +55,24 @@ you can mostly just run the './start.sh but otherwise
 python agent.py
 ```
 
-Server starts on `http://localhost:5000`
+Server starts on `http://localhost:5000'
+
+## Env Set-up
+
+### 1. Create your .env file
+```cp .env.example .env```
+
+### 2. Add your keys with natural language
+```
+cat >> .env << EOF
+Airtable personal access token: pat_yourtoken
+Discord bot token: MTk4yourtoken
+EOF
+```
+
+### 3. Use with agents - keys are found automatically!
+
+`
 
 ## Available Agents
 
