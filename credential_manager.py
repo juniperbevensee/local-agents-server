@@ -122,7 +122,9 @@ def _fuzzy_match(search_term: str, credentials: Dict[str, str]) -> Optional[str]
     Matching strategy:
     1. Exact match (case-insensitive)
     2. Partial match (search term in key)
-    3. Keyword match (all words in search term appear in key)
+    3. Partial match without underscores (handles "openmeasures" vs "open_measures")
+    4. Keyword match (all words in search term appear in key)
+    5. Reverse partial match
 
     Args:
         search_term: The term to search for (e.g., "airtable", "discord bot")
@@ -144,7 +146,16 @@ def _fuzzy_match(search_term: str, credentials: Dict[str, str]) -> Optional[str]
             logger.debug(f"Partial match found: '{search_term}' matches '{key}'")
             return value
 
-    # Strategy 3: Keyword match - all words in search term appear in key
+    # Strategy 3: Partial match without underscores - handles "openmeasures" vs "open_measures"
+    # Remove underscores from both search and keys for comparison
+    search_no_underscores = normalized_search.replace('_', '')
+    for key, value in credentials.items():
+        key_no_underscores = key.replace('_', '')
+        if search_no_underscores in key_no_underscores or key_no_underscores in search_no_underscores:
+            logger.debug(f"Underscore-insensitive match found: '{search_term}' matches '{key}'")
+            return value
+
+    # Strategy 4: Keyword match - all words in search term appear in key
     search_words = normalized_search.split('_')
     if len(search_words) > 1:
         for key, value in credentials.items():
@@ -152,7 +163,7 @@ def _fuzzy_match(search_term: str, credentials: Dict[str, str]) -> Optional[str]
                 logger.debug(f"Keyword match found: '{search_term}' matches '{key}'")
                 return value
 
-    # Strategy 4: Reverse partial - key is substring of search term
+    # Strategy 5: Reverse partial - key is substring of search term
     for key, value in credentials.items():
         if key in normalized_search:
             logger.debug(f"Reverse partial match: '{key}' in '{search_term}'")
